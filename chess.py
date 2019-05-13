@@ -2,8 +2,12 @@ import itertools
 from enum import Enum
 from string import ascii_lowercase
 
-
 from errors import BaseMovementError
+
+# from rule import validate_movement
+
+
+BOARD_SIZE = 8
 
 
 class Color(Enum):
@@ -137,6 +141,9 @@ class Chess(object):
             for j in range(8):
                 self.square_to_piece[Square(i, j)] = None
 
+        self.turn = None  # who's turn
+        self.history = []
+
     def put(self, piece, square):
         assert piece not in self.piece_to_square
         self.square_to_piece[square] = piece
@@ -170,18 +177,19 @@ class Chess(object):
 
     def format(self):
         """a simple way to visualize"""
+
         def format_line(y):
             ab_lst = []
             for i in range(8):
                 sq = Square(i, y)
                 p = self.square_to_piece[sq]
-                ab = piece_abbr(p)
+                ab = piece_abbr(sq, p)
                 ab_lst.append(ab)
             return ' '.join(ab_lst)
 
-        def piece_abbr(p=None):
+        def piece_abbr(sq, p=None):
             if p is None:
-                return '..'
+                return '..' if sq.color == Color.WHITE else '||'
             else:
                 return p.job.value[0] + p.camp.value[-1]
 
@@ -229,6 +237,8 @@ class BasicMovement(object):
             chess.remove(square=self.capture)
 
         chess.put(square=self.to or self.capture, piece=self.replace or pie)
+
+        return chess
 
 
 class DoubleMovement(BasicMovement):
@@ -318,19 +328,36 @@ class Castling(Movement):
 
 
 class Player(object):
-    def __call__(self, chess, last_movement=None):
-        pass
+    def __init__(self, camp):
+        self._camp = camp
+
+    def __call__(self, chess):
+        cmd = input('{} turn >> '.format(self.camp)).strip().lower()
+        return _m(cmd)
 
     @property
     def camp(self):
-        pass
+        return self._camp
 
 
 def play(player_a, player_b):
     chess = Chess.setup()
-    last_movement = None
 
     for player in itertools.cycle([player_a, player_b]):
-        player(chess, last_movement).apply_to(chess)
-        if chess.end():
-            return chess.result()
+        chess.turn = player.camp
+
+        print()
+        print(chess.format())
+
+        mv = player(chess)
+        assert isinstance(mv, Movement)
+        # assert validate_movement(chess, mv), '{} is not a valid movement for {}'.format(mv, player.camp)
+
+        chess = mv.apply_to(chess)
+        # r = check_result(chess)
+        # if r:
+        #     return r
+
+
+if __name__ == '__main__':
+    play(Player(Camp.A), Player(Camp.B))

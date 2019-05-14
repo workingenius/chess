@@ -201,10 +201,10 @@ class Chess(object):
         return '\n'.join(lines)
 
 
-class BasicMovement(object):
+class Movement(object):
     """movement that don't take chess rule into account"""
 
-    def __init__(self, frm, to=None, capture=None, replace=None):
+    def __init__(self, frm, to=None, capture=None, replace=None, sub_movement: 'Movement' = None):
         self.frm = frm
 
         if to is None and capture is None:
@@ -217,6 +217,8 @@ class BasicMovement(object):
 
         # replace is designed for pawn promotion
         self.replace = replace
+
+        self.sub_movement = sub_movement
 
     def apply_to(self, chess):
         if chess.square_to_piece.get(self.frm) is None:
@@ -238,23 +240,11 @@ class BasicMovement(object):
 
         chess.put(square=self.to or self.capture, piece=self.replace or pie)
 
+        if self.sub_movement:
+            chess = self.sub_movement.apply_to(chess)
+
         return chess
 
-
-class DoubleMovement(BasicMovement):
-    """allow two basic movement happens together. designed for castling"""
-
-    # noinspection PyMissingConstructor
-    def __init__(self, mv_a, mv_b):
-        self.a = mv_a
-        self.b = mv_b
-
-    def apply_to(self, chess):
-        self.a.apply_to(chess)
-        self.b.apply_to(chess)
-
-
-class Movement(BasicMovement):
     @property
     def name(self):
         if self.capture:
@@ -283,48 +273,6 @@ class Movement(BasicMovement):
 
 
 _m = Movement.by_name
-
-
-class Castling(Movement):
-    """castling, a special movement"""
-
-    # noinspection PyMissingConstructor
-    def __init__(self, camp, short=True):
-        self.camp = camp
-        self.short = bool(short)
-        self.long = not self.short
-
-    def apply_to(self, chess):
-        def s(name):
-            return Square.by_name(name)
-
-        if self.camp == Camp.A and self.short:
-            dm = DoubleMovement(
-                BasicMovement(frm=s('e1'), to=s('g1')),
-                BasicMovement(frm=s('h1'), to=s('f1'))
-            )
-        elif self.camp == Camp.A and self.long:
-            dm = DoubleMovement(
-                BasicMovement(frm=s('e1'), to=s('c1')),
-                BasicMovement(frm=s('a1'), to=s('d1'))
-            )
-        elif self.camp == Camp.B and self.short:
-            dm = DoubleMovement(
-                BasicMovement(frm=s('e8'), to=s('g8')),
-                BasicMovement(frm=s('h8'), to=s('f8'))
-            )
-        elif self.camp == Camp.A and self.long:
-            dm = DoubleMovement(
-                BasicMovement(frm=s('e8'), to=s('c8')),
-                BasicMovement(frm=s('a8'), to=s('d8'))
-            )
-        else:
-            raise ValueError('cant touch here')
-
-        return dm.apply_to(chess)
-
-    def format(self):
-        return 'O-O' if self.short else 'O-O-O'
 
 
 class Player(object):

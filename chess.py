@@ -204,11 +204,17 @@ class Chess(object):
                 ab_lst.append(ab)
             return ' '.join(ab_lst)
 
+        def job_abbr(job):
+            if job == Job.KING:
+                return 'Z'
+            else:
+                return job.value[0].upper()
+
         def piece_abbr(sq, p=None):
             if p is None:
                 return '..' if sq.color == Color.WHITE else '||'
             else:
-                return p.job.value[0] + p.camp.value[-1]
+                return job_abbr(p.job) + p.camp.value[-1].lower()
 
         lines = []
         for j in range(7, -1, -1):

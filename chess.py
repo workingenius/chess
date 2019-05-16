@@ -5,9 +5,6 @@ from typing import List
 
 from errors import BaseMovementError
 
-# from rule import validate_movement
-
-
 BOARD_SIZE = 8
 
 
@@ -244,7 +241,7 @@ class Movement(object):
         if chess.square_to_piece.get(self.frm) is None:
             raise BaseMovementError('{} is empty so nothing to move'.format(self.frm.format()))
 
-        if self.to and chess.square_to_piece.get(self.to):
+        if not self.capture and self.to and chess.square_to_piece.get(self.to):
             raise BaseMovementError('{} is occupied by another piece'.format(self.to.format()))
 
         if self.capture and chess.square_to_piece.get(self.capture) is None:
@@ -449,7 +446,6 @@ class RuleBroken(Exception):
 
 
 def validate_movement(chess, mv: Movement):
-
     # basic checks
 
     sq, pi = mv.frm, chess.square_to_piece.get(mv.frm)

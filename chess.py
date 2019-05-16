@@ -1,6 +1,7 @@
 import itertools
 from enum import Enum
 from string import ascii_lowercase
+from typing import List
 
 from errors import BaseMovementError
 
@@ -63,6 +64,25 @@ class Square(object):
 
     def __eq__(self, other):
         return isinstance(other, Square) and self.x == other.x and self.y == other.y
+
+    def is_ending_line(self, camp, index=0):
+        if camp == Camp.A:
+            return self.y == (7 - index)
+        else:
+            return self.y == (0 + index)
+
+    def is_starting_line(self, camp, index=0):
+        if camp == Camp.A:
+            return self.y == (0 + index)
+        else:
+            return self.y == (7 - index)
+
+    @staticmethod
+    def is_adjacent(sq1, sq2, horizontally=False):
+        if horizontally:
+            return sq1.y == sq2.y and abs(sq1.x - sq2.x) == 1
+        else:
+            return max(abs(sq1.x - sq2.x), abs(sq1.y - sq2.y)) == 1
 
 
 class Piece(object):
@@ -212,7 +232,7 @@ class Movement(object):
 
         # two arguments for move from and move to respectively,
         # for the sake of "En passant"
-        self.to = to
+        self.to = to or capture
         self.capture = capture
 
         # replace is designed for pawn promotion
@@ -275,6 +295,303 @@ class Movement(object):
 _m = Movement.by_name
 
 
+class Direction(object):
+    def __init__(self, x, y):
+        self.x: int = x
+        self.y: int = y
+
+    @property
+    def is_zero(self):
+        return self.x == 0 and self.y == 0
+
+    @property
+    def is_vertical(self):
+        return self.x == 0 and self.y != 0
+
+    @property
+    def is_horizontal(self):
+        return self.x != 0 and self.y == 0
+
+    @property
+    def is_north(self):
+        return self.x == 0 and self.y > 0
+
+    @property
+    def is_south(self):
+        return self.x == 0 and self.y < 0
+
+    @property
+    def is_west(self):
+        return self.x < 0 and self.y == 0
+
+    @property
+    def is_east(self):
+        return self.x > 0 and self.y == 0
+
+    @property
+    def is_north_west(self):
+        return self.x < 0 and self.y > 0
+
+    @property
+    def is_north_east(self):
+        return self.x > 0 and self.y > 0
+
+    @property
+    def is_south_west(self):
+        return self.x < 0 and self.y < 0
+
+    @property
+    def is_south_east(self):
+        return self.x > 0 and self.y < 0
+
+    def is_forward(self, camp, just=True):
+        if just:
+            if camp == Camp.A:
+                return self.is_north
+            else:
+                return self.is_south
+        else:
+            if camp == Camp.A:
+                return self.y > 0
+            else:
+                return self.y < 0
+
+    def is_backward(self, camp, just=True):
+        if just:
+            if camp == Camp.A:
+                return self.is_south
+            else:
+                return self.is_north
+        else:
+            if camp == Camp.A:
+                return self.y > 0
+            else:
+                return self.y < 0
+
+
+class MovePath(object):
+    """a vertical, horizontal or diagonal move path"""
+
+    class InvalidPath(ValueError):
+        pass
+
+    def __init__(self, start, end):
+        self.start: Square = start
+        self.end: Square = end
+
+        # squares that move passes, starting point and ending point are not included
+        self.passes: List[Square] = None
+
+        # move distance
+        self.dis: int = None
+
+        # direction
+        self.direction: Direction = Direction(x=(end.x - start.x), y=(end.y - start.y))
+
+        self.initial_calc()
+
+    def moved(self):
+        return self.start != self.end
+
+    def __bool__(self):
+        return self.moved()
+
+    def initial_calc(self):
+        passes = []
+        dis = 0
+
+        if self.moved():
+            start = self.start
+            end = self.end
+
+            if start.x == end.x:
+                # vertical path
+                passes = [Square(x=start.x, y=i) for i in self.from_to(start.y, end.y)]
+
+            elif start.y == end.y:
+                # horizontal path
+                passes = [Square(x=i, y=start.y) for i in self.from_to(start.x, end.x)]
+
+            elif abs(start.x - end.x) == abs(start.y - end.y):
+                # diagonal path
+                x_lst = self.from_to(start.x, end.x)
+                y_lst = self.from_to(start.y, end.y)
+                passes = [Square(x=x, y=y) for x, y in zip(x_lst, y_lst)]
+
+            else:
+                raise self.InvalidPath((self.start, self.end))
+
+            dis = len(passes) + 1
+
+        self.passes = passes
+        self.dis = dis
+
+    @staticmethod
+    def from_to(a, b):
+        if a < b:
+            return list(range(a + 1, b))
+        elif a > b:
+            return list(range(a - 1, b, -1))
+
+
+class RuleOK(object):
+    ok = True
+
+    def __bool__(self):
+        return True
+
+
+class RuleBroken(Exception):
+    ok = False
+
+    def __bool__(self):
+        return False
+
+
+def validate_movement(chess, mv: Movement):
+
+    # basic checks
+
+    sq, pi = mv.frm, chess.square_to_piece.get(mv.frm)
+    if pi is None:
+        return RuleBroken('There is not a piece')
+
+    if pi.camp != chess.turn:
+        return RuleBroken('You can\'t move your partner\'s piece')
+
+    if mv.capture and not chess.square_to_piece.get(mv.capture):
+        return RuleBroken('There\'s nothing to capture')
+
+    # check move path
+
+    if pi.job == Job.KNIGHT:
+        # only knight has no move path
+        pass
+
+    else:
+        try:
+            path = MovePath(start=mv.frm, end=mv.to)
+        except MovePath.InvalidPath:
+            return RuleBroken('No piece can fly')
+
+        if not path.moved():
+            return RuleBroken('The piece doesnt move')
+
+        for pss_sq in path.passes:
+            _pi = chess.square_to_piece.get(pss_sq)
+            if _pi:
+                return RuleBroken('Another piece is in the way')
+
+        target_sq = path.end
+        target_pi = chess.square_to_piece.get(target_sq)
+        if target_pi:
+            if target_pi.camp == pi.camp:
+                return RuleBroken('You can\'t capture piece of your own camp')
+
+    # piece related checks
+
+    def goto_capture():
+        if mv.capture:
+            if mv.to != mv.capture:
+                return RuleBroken('You cant kill piece by magic')
+
+    def check_replace():
+        if mv.replace:
+            return RuleBroken('Only pawns have change to promote')
+
+    def check_castle():
+        di = path.direction
+        if not (di.is_vertical or di.is_horizontal):
+            return RuleBroken('Castle can only move horizontally or vertically')
+
+        return goto_capture() or check_replace() or RuleOK()
+
+    def check_queen():
+        # no need to check it's direction
+        # because queen can go in any direction as long as it does not fly
+        return goto_capture() or check_replace() or RuleOK()
+
+    def check_bishop():
+        di = path.direction
+        if not (di.is_south_east or di.is_south_west or di.is_north_east or di.is_north_west):
+            return RuleBroken('Bishop can only move diagonally')
+
+        return goto_capture() or check_replace() or RuleOK()
+
+    def check_pawn():
+
+        # check promotion
+        if mv.replace:
+            if not mv.to.is_ending_line(chess.turn):
+                return RuleBroken('Pawns can promote only when they reach the ending line')
+
+            if mv.replace.job == Job.KING:
+                return RuleBroken('A pawn can not promote to a king')
+
+        # check movement
+        if not path.direction.is_forward(camp=chess.turn, just=False):
+            return RuleBroken('A pawn can only proceed')
+
+        if path.dis > 2:
+            return RuleBroken('The pawn moves too fast')
+
+        if path.direction.is_forward(camp=chess.turn, just=True):
+            # is proceeding
+
+            # check starting charge
+            if path.dis == 2:
+                if mv.frm.is_starting_line(camp=chess.turn, index=1):
+                    pass
+                else:
+                    return RuleBroken('A pawn can only charge from his beginning point')
+
+            if mv.capture:
+                if chess.square_to_piece.get(mv.capture):
+                    # an enemy is ahead
+                    return RuleBroken('Pawns cant attack enemy in front of him')
+                else:
+                    return RuleBroken('Pawns cant attack when proceeding')
+
+        else:
+            # is attacking
+            if path.dis == 2:
+                return RuleBroken('A pawn can only attack enemy in diagonal direction by one square')
+
+            # TODO: check en passant
+            return goto_capture() or RuleOK()
+
+        return RuleOK()
+
+    def check_knight():
+        if {abs(mv.to.x - mv.frm.x), abs(mv.to.y - mv.frm.y)} != {1, 2}:
+            return RuleBroken('Knight can only move in L shape')
+
+        return goto_capture() or check_replace() or RuleOK()
+
+    def check_king():
+        if not Square.is_adjacent(mv.frm, mv.to):
+            return RuleBroken('The king can only move to his adjacent square')
+
+        return goto_capture() or check_replace() or RuleOK()
+
+    check_map = {
+        Job.BISHOP: check_bishop,
+        Job.QUEEN: check_queen,
+        Job.PAWN: check_pawn,
+        Job.KNIGHT: check_knight,
+        Job.KING: check_king,
+        Job.CASTLE: check_castle
+    }
+
+    check = check_map[pi.job]()
+    if not check.ok:
+        return check
+
+    # TODO: king related checks
+
+    return RuleOK()
+
+
 class Player(object):
     def __init__(self, camp):
         self._camp = camp
@@ -299,7 +616,15 @@ def play(player_a, player_b):
 
         mv = player(chess)
         assert isinstance(mv, Movement)
-        # assert validate_movement(chess, mv), '{} is not a valid movement for {}'.format(mv, player.camp)
+        rule_check = validate_movement(chess, mv)
+
+        while not rule_check.ok:
+            print(rule_check)
+            print()
+
+            mv = player(chess)
+            assert isinstance(mv, Movement)
+            rule_check = validate_movement(chess, mv)
 
         chess = mv.apply_to(chess)
         # r = check_result(chess)

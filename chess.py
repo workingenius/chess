@@ -83,9 +83,12 @@ class Square(object):
 
 
 class Piece(object):
-    def __init__(self, camp, job):
+    @property
+    def job(self):
+        raise NotImplementedError
+
+    def __init__(self, camp):
         self.camp = camp
-        self.job = job
         self.square = None
 
     def __str__(self):
@@ -96,6 +99,41 @@ class Piece(object):
 
     def format(self):
         return str(self)
+
+
+class PKing(Piece):
+    job = Job.KING
+
+
+class PPawn(Piece):
+    job = Job.PAWN
+
+
+class PKnight(Piece):
+    job = Job.KNIGHT
+
+
+class PQueen(Piece):
+    job = Job.QUEEN
+
+
+class PCastle(Piece):
+    job = Job.CASTLE
+
+
+class PBishop(Piece):
+    job = Job.BISHOP
+
+
+def cons_piece(camp, job):
+    return {
+        Job.KNIGHT: PKnight,
+        Job.PAWN: PPawn,
+        Job.KING: PKing,
+        Job.QUEEN: PQueen,
+        Job.CASTLE: PCastle,
+        Job.BISHOP: PBishop
+    }[job](camp)
 
 
 class Chess(object):
@@ -146,7 +184,7 @@ class Chess(object):
         ]
 
         for loc in locations:
-            c.put(piece=Piece(camp=loc[0], job=loc[1]), square=loc[2])
+            c.put(piece=cons_piece(camp=loc[0], job=loc[1]), square=loc[2])
 
         return c
 

@@ -489,6 +489,32 @@ class RuleBroken(Exception):
         return False
 
 
+def _validate_movement(chess, mv: Movement):
+    # REWRITING validate_movement
+
+    # 1. You have to move a piece, but not move air
+    # 2. The piece you move must be of your own camp, you can't move your partner's piece
+
+    # 3. The movement must comply move rule of the job ... It differs from the job , but generally speaking,
+    #   a. If you want to capture another piece, make sure there's one to capture
+    #   b. If you capture a piece, it can't be of your own camp
+
+    # 4. If your king is currently in danger, the movement must save your king.
+    #     (note: If the king is currently in danger, and none of possible movements is able to save him, it's checkmate
+    #     and should be found right after last movement.)
+    # 5. And make sure that the movement will not expose your king to danger.
+
+    # In step 3:
+    #     Piece.comply_rule(self: Piece, chess: Chess, mv: Movement) -> Union[ RuleOk, RuleBroken ]
+    #         """Check if a movement is valid according to rule of the job, and return why if broken."""
+    #
+    # In step 4:
+    #     Piece.attacks(self: Piece, chess: Chess, sq: Square) -> bool
+    #         """Check if the piece <self> in <chess> is attacking a certain square <sq>"""
+    #         This function is needed to check if the king is currently in danger or will be in danger.
+    pass
+
+
 def validate_movement(chess, mv: Movement):
     # basic checks
 
@@ -667,9 +693,15 @@ def play(player_a, player_b):
             rule_check = validate_movement(chess, mv)
 
         chess = mv.apply_to(chess)
-        # r = check_result(chess)
-        # if r:
-        #     return r
+
+        # See if checkmate or stalemate happens
+        #
+        # + if the other camp have no movement to save their king -- checkmate
+        # + if the other camp have no possible movement, and their king is not in danger -- stalemate
+        #
+        # Here we need:
+        #    generate_movements(chess: Chess, camp: Camp) -> List[Movement]
+        #    is_king_in_danger(chess: Chess, camp: Camp) -> bool
 
 
 if __name__ == '__main__':

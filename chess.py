@@ -1,7 +1,7 @@
 import itertools
 from enum import Enum
 from string import ascii_lowercase
-from typing import List
+from typing import Iterator, Optional
 
 from errors import BaseMovementError
 
@@ -80,6 +80,9 @@ class Square(object):
             return sq1.y == sq2.y and abs(sq1.x - sq2.x) == 1
         else:
             return max(abs(sq1.x - sq2.x), abs(sq1.y - sq2.y)) == 1
+
+    def __add__(self, delta: 'Delta'):
+        return MoveOperator.sq_add_delta(self, delta)
 
 
 class Piece(object):
@@ -336,10 +339,26 @@ class Movement(object):
 _m = Movement.by_name
 
 
-class Direction(object):
+class Delta(object):
     def __init__(self, x, y):
         self.x: int = x
         self.y: int = y
+
+    @classmethod
+    def as_camp(cls, forward=None, backward=None, leftward=None, rightward=None, camp=Camp.A):
+        assert (forward and not backward) or (not forward and backward), 'forward and backward cant both exist'
+        assert (leftward and not rightward) or (not leftward and rightward), 'leftward and rightward cant both exist'
+
+        if camp == Camp.A:
+            x = rightward or -leftward
+            y = forward or -backward
+        elif camp == Camp.B:
+            x = leftward or -rightward
+            y = backward or -forward
+        else:
+            raise ValueError
+
+        return cls(x=x, y=y)
 
     @property
     def is_zero(self):
@@ -409,80 +428,113 @@ class Direction(object):
             else:
                 return self.y < 0
 
+    @property
+    def is_l_shape(self):
+        """knight move in l shape"""
+        return {abs(self.x), abs(self.y)} == {1, 2}
 
-class MovePath(object):
+    @property
+    def dis(self) -> int:
+        return max(self.x, self.y)
+
+    def __mul__(self, other):
+        return self.__class__(x=self.x * other, y=self.y * other)
+
+    def moved(self):
+        return self.x != 0 or self.y != 0
+
+    def __bool__(self):
+        return self.moved()
+
+    def passes_from(self, sq):
+        return []
+
+
+class MovePath(Delta):
     """a vertical, horizontal or diagonal move path"""
 
     class InvalidPath(ValueError):
         pass
 
-    def __init__(self, start, end):
-        self.start: Square = start
-        self.end: Square = end
-
-        # squares that move passes, starting point and ending point are not included
-        self.passes: List[Square] = None
-
-        # move distance
-        self.dis: int = None
-
-        # direction
-        self.direction: Direction = Direction(x=(end.x - start.x), y=(end.y - start.y))
-
-        self.initial_calc()
-
-    def moved(self):
-        return self.start != self.end
-
-    def __bool__(self):
-        return self.moved()
-
-    def initial_calc(self):
-        passes = []
-        dis = 0
+    def __init__(self, x, y):
+        super(MovePath, self).__init__(x, y)
 
         if self.moved():
-            start = self.start
-            end = self.end
-
-            if start.x == end.x:
+            if x == 0:
                 # vertical path
-                passes = [Square(x=start.x, y=i) for i in self.from_to(start.y, end.y)]
+                pass
 
-            elif start.y == end.y:
+            elif y == 0:
                 # horizontal path
-                passes = [Square(x=i, y=start.y) for i in self.from_to(start.x, end.x)]
+                pass
 
-            elif abs(start.x - end.x) == abs(start.y - end.y):
+            elif abs(x) == abs(y):
                 # diagonal path
-                x_lst = self.from_to(start.x, end.x)
-                y_lst = self.from_to(start.y, end.y)
-                passes = [Square(x=x, y=y) for x, y in zip(x_lst, y_lst)]
+                pass
 
             else:
-                raise self.InvalidPath((self.start, self.end))
+                raise self.InvalidPath((x, y))
 
-            dis = len(passes) + 1
+        self.unit_x = x // abs(x) if x else 0
+        self.unit_y = y // abs(y) if y else 0
 
-        self.passes = passes
-        self.dis = dis
+    def passes(self) -> Iterator[Delta]:
+        if self.moved():
+            delta = Delta(x=self.unit_x, y=self.unit_y)
+
+            for i in range(1, self.x):
+                yield delta * i
+
+    def passes_from(self, sq: Square):
+        return [sq + d for d in self.passes()]
+
+
+class MoveOperator(object):
+    @staticmethod
+    def sq_sub_sq(sqa: Square, sqb: Square, delta_type=None):
+        delta_type = delta_type or Delta
+        return delta_type(x=(sqa.x - sqb.x), y=(sqa.y - sqb.y))
 
     @staticmethod
-    def from_to(a, b):
-        if a < b:
-            return list(range(a + 1, b))
-        elif a > b:
-            return list(range(a - 1, b, -1))
+    def sq_add_delta(sq: Square, d: Delta):
+        return Square(x=(sq.x + d.x), y=(sq.y + d.y))
+
+    @staticmethod
+    def sq_sub_delta(sq: Square, d: Delta):
+        return Square(x=(sq.x - d.x), y=(sq.y - d.y))
+
+    def __check_value(self):
+        if self.start and self.end and (self.delta is None):
+            self.delta = self.sq_sub_sq(self.end, self.start, delta_type=self.delta_type)
+
+        elif self.start and self.delta and (self.end is None):
+            self.end = self.sq_add_delta(self.start, d=self.delta)
+
+        elif self.end and self.delta and (self.start is None):
+            self.start = self.sq_sub_delta(self.end, d=self.delta)
+
+    def __init__(self, start=None, end=None, delta=None, delta_type=None):
+        self.delta_type = delta_type or Delta
+
+        self.start: Optional[Square] = start
+        self.end: Optional[Square] = end
+        self.delta: Optional[Delta] = delta
+
+        self.__check_value()
 
 
-class RuleOK(object):
+class RuleStatus(object):
+    pass
+
+
+class RuleOK(RuleStatus):
     ok = True
 
     def __bool__(self):
         return True
 
 
-class RuleBroken(Exception):
+class RuleBroken(RuleStatus, Exception):
     ok = False
 
     def __bool__(self):
@@ -505,7 +557,7 @@ def _validate_movement(chess, mv: Movement):
     # 5. And make sure that the movement will not expose your king to danger.
 
     # In step 3:
-    #     Piece.comply_rule(self: Piece, chess: Chess, mv: Movement) -> Union[ RuleOk, RuleBroken ]
+    #     Piece.is_valid_movement(self: Piece, chess: Chess, mv: Movement) -> Union[ RuleOk, RuleBroken ]
     #         """Check if a movement is valid according to rule of the job, and return why if broken."""
     #
     # In step 4:
@@ -530,29 +582,27 @@ def validate_movement(chess, mv: Movement):
 
     # check move path
 
-    if pi.job == Job.KNIGHT:
-        # only knight has no move path
-        pass
+    del_typ = Delta if pi.job == Job.KNIGHT else MovePath
 
-    else:
-        try:
-            path = MovePath(start=mv.frm, end=mv.to)
-        except MovePath.InvalidPath:
-            return RuleBroken('No piece can fly')
+    try:
+        delta = MoveOperator(start=mv.frm, end=mv.to, delta_type=del_typ).delta
+        passes = delta.passes_from(mv.frm)
+    except MovePath.InvalidPath:
+        return RuleBroken('No piece can fly')
 
-        if not path.moved():
-            return RuleBroken('The piece doesnt move')
+    if not delta.moved():
+        return RuleBroken('The piece doesnt move')
 
-        for pss_sq in path.passes:
-            _pi = chess.square_to_piece.get(pss_sq)
-            if _pi:
-                return RuleBroken('Another piece is in the way')
+    for pss_sq in passes:
+        _pi = chess.square_to_piece.get(pss_sq)
+        if _pi:
+            return RuleBroken('Another piece is in the way')
 
-        target_sq = path.end
-        target_pi = chess.square_to_piece.get(target_sq)
-        if target_pi:
-            if target_pi.camp == pi.camp:
-                return RuleBroken('You can\'t capture piece of your own camp')
+    target_sq = mv.to
+    target_pi = chess.square_to_piece.get(target_sq)
+    if target_pi:
+        if target_pi.camp == pi.camp:
+            return RuleBroken('You can\'t capture piece of your own camp')
 
     # piece related checks
 
@@ -566,7 +616,7 @@ def validate_movement(chess, mv: Movement):
             return RuleBroken('Only pawns have change to promote')
 
     def check_castle():
-        di = path.direction
+        di = delta
         if not (di.is_vertical or di.is_horizontal):
             return RuleBroken('Castle can only move horizontally or vertically')
 
@@ -578,7 +628,7 @@ def validate_movement(chess, mv: Movement):
         return goto_capture() or check_replace() or RuleOK()
 
     def check_bishop():
-        di = path.direction
+        di = delta
         if not (di.is_south_east or di.is_south_west or di.is_north_east or di.is_north_west):
             return RuleBroken('Bishop can only move diagonally')
 
@@ -595,17 +645,17 @@ def validate_movement(chess, mv: Movement):
                 return RuleBroken('A pawn can not promote to a king')
 
         # check movement
-        if not path.direction.is_forward(camp=chess.turn, just=False):
+        if not delta.is_forward(camp=chess.turn, just=False):
             return RuleBroken('A pawn can only proceed')
 
-        if path.dis > 2:
+        if delta.dis > 2:
             return RuleBroken('The pawn moves too fast')
 
-        if path.direction.is_forward(camp=chess.turn, just=True):
+        if delta.is_forward(camp=chess.turn, just=True):
             # is proceeding
 
             # check starting charge
-            if path.dis == 2:
+            if delta.dis == 2:
                 if mv.frm.is_starting_line(camp=chess.turn, index=1):
                     pass
                 else:
@@ -620,7 +670,7 @@ def validate_movement(chess, mv: Movement):
 
         else:
             # is attacking
-            if path.dis == 2:
+            if delta.dis == 2:
                 return RuleBroken('A pawn can only attack enemy in diagonal direction by one square')
 
             # TODO: check en passant
@@ -629,7 +679,7 @@ def validate_movement(chess, mv: Movement):
         return RuleOK()
 
     def check_knight():
-        if {abs(mv.to.x - mv.frm.x), abs(mv.to.y - mv.frm.y)} != {1, 2}:
+        if not delta.is_l_shape:
             return RuleBroken('Knight can only move in L shape')
 
         return goto_capture() or check_replace() or RuleOK()

@@ -64,7 +64,7 @@ class Square(object):
 
     def is_ending_line(self, camp, index=0):
         if camp == Camp.A:
-            return self.y == (7 - index)
+            return self.y == (BOARD_SIZE - 1 - index)
         else:
             return self.y == (0 + index)
 
@@ -72,7 +72,7 @@ class Square(object):
         if camp == Camp.A:
             return self.y == (0 + index)
         else:
-            return self.y == (7 - index)
+            return self.y == (BOARD_SIZE - 1 - index)
 
     @staticmethod
     def is_adjacent(sq1, sq2, horizontally=False):
@@ -86,6 +86,25 @@ class Square(object):
 
     def __sub__(self, sq: 'Square'):
         return Delta(x=(self.x - sq.x), y=(self.y - sq.y))
+
+    def is_on_board(self):
+        return 0 <= self.x < BOARD_SIZE and 0 <= self.y < BOARD_SIZE
+
+
+def _on_board(sq_lst):
+    return filter(lambda x: x.is_on_board(), sq_lst)
+
+
+def _has_enemy(chess, camp, at):
+    return chess.square_to_piece.get(at) and chess.square_to_piece.get(at).camp != camp
+
+
+def _has_alias(chess, camp, at):
+    return chess.square_to_piece.get(at) and chess.square_to_piece.get(at).camp == camp
+
+
+def _has_piece(chess, at):
+    return bool(chess.square_to_piece.get(at))
 
 
 class Piece(object):
@@ -106,13 +125,125 @@ class Piece(object):
     def format(self):
         return str(self)
 
+    def attack_lst(self, chess) -> Iterator[Square]:
+        """generate all squares it is able to capture in the next movement,
+        even if there's not a piece or the piece is of same camp"""
+        raise NotImplementedError
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        """generate all movements launched by the piece"""
+        raise NotImplementedError
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> bool:
+        """if the movement <mv> about the job is valid. If not, tell reason"""
+        raise NotImplementedError
+
 
 class PKing(Piece):
     job = Job.KING
 
+    def attack_lst(self, chess) -> Iterator[Square]:
+        # squares surrounding it in all eight direction on board
+        sq = chess.piece_to_square.get(self)
+        return _on_board(sq + di for di in ALL_DIRECTIONS)
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        # regular moves
+        #   squares surrounding it in all eight direction on board, able to move there and capture a enemy
+        # castling
+        #   positive condition:
+        #     1. king has not moved
+        #     2. the castle involved has not moved
+        #     3. no any other pieces in the way
+        #     4. squares in the way is not currently attacked by any enemy piece
+        #   movement:
+        #     1. king move toward the castle by two square
+        #     2. the castle move toward, over, and right beside king
+        frm = chess.piece_to_square.get(self)
+        for to in self.attack_lst(chess):
+            if _has_enemy(chess, self.camp, at=to):
+                yield Movement(frm=frm, capture=to)
+            elif _has_alias(chess, self.camp, at=to):
+                pass
+            else:
+                yield Movement(frm=frm, to=to)
+
+        # TODO: CASTLING
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+        rule = 'King only move straight by one square'
+
+        try:
+            delta = mv.to - mv.frm
+            passes(start=mv.frm, delta=delta, straight_only=True)
+        except InvalidPath:
+            return RuleBroken(rule)
+
+        if delta.dis >= 2:
+            return RuleBroken(rule)
+
+        # TODO: check CASTLING
+
+        return RULE_OK
+
 
 class PPawn(Piece):
     job = Job.PAWN
+
+    def attack_lst(self, chess) -> Iterator[Square]:
+        # one square ahead of columns on both side
+        # special case: en passant
+        #   If a pawn is beside an enemy pawn who has just charged two square,
+        #   he can move diagonally as usual and attack back to capture the enemy pawn
+
+        return _on_board([
+            chess.piece_to_square[self] + Delta.as_camp(forward=1, leftward=1),
+            chess.piece_to_square[self] + Delta.as_camp(forward=1, rightward=1)
+        ])
+
+        # TODO: en passant
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        at = chess.piece_to_square[self]
+
+        def mv_with_promotion(frm, to=None, capture=None):
+            target = to or capture
+
+            if target.is_ending_line(camp=self.camp):
+                for prom in [
+                    cons_piece(self.camp, Job.QUEEN),
+                    cons_piece(self.camp, Job.KNIGHT),
+                    cons_piece(self.camp, Job.BISHOP),
+                    cons_piece(self.camp, Job.CASTLE),
+                ]:
+                    yield Movement(frm=frm, to=to, capture=capture, replace=prom)
+
+            else:
+                yield Movement(frm=frm, to=to, capture=capture)
+
+        # check charge
+        if at.is_starting_line(index=1, camp=self.camp):
+            d = Delta.as_camp(forward=2)
+            to = at + d
+            if not in_the_way(chess, passes(at, delta=d)) and not _has_piece(chess, at=to):
+                # no need to check for promotion in starting point
+                yield Movement(frm=at, to=to)
+
+        # one step forward
+        d = Delta.as_camp(forward=1)
+        to = at + d
+        if not _has_piece(chess, at=to):
+            for mv in mv_with_promotion(frm=at, to=to):
+                yield mv
+
+        # capture
+        for cp in self.attack_lst(chess):
+            if _has_enemy(chess, camp=self.camp, at=cp):
+                for mv in mv_with_promotion(frm=at, capture=cp):
+                    yield mv
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> bool:
+        pass
 
 
 class PKnight(Piece):
@@ -457,6 +588,18 @@ class Delta(object):
         )
 
 
+ALL_DIRECTIONS = [
+    Delta(0, 1),  # north
+    Delta(1, 1),  # north east
+    Delta(1, 0),  # east
+    Delta(1, -1),  # south east
+    Delta(0, -1),  # south
+    Delta(-1, -1),  # south west
+    Delta(-1, 0),  # west
+    Delta(-1, 1),  # north west
+]
+
+
 class InvalidPath(ValueError):
     pass
 
@@ -483,6 +626,15 @@ def passes(start: Square, end: Square = None, delta: Delta = None, straight_only
     return [start + (unit * i) for i in range(1, delta.dis)]
 
 
+def in_the_way(chess, pass_way):
+    """if some piece is in the way"""
+
+    for sq in pass_way:
+        if chess.square_to_piece.get(sq):
+            return True
+    return False
+
+
 class RuleStatus(object):
     pass
 
@@ -492,6 +644,9 @@ class RuleOK(RuleStatus):
 
     def __bool__(self):
         return True
+
+
+RULE_OK = RuleOK()
 
 
 class RuleBroken(RuleStatus, Exception):

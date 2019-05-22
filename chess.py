@@ -1,7 +1,7 @@
 import itertools
 from enum import Enum
 from string import ascii_lowercase
-from typing import Iterator, Optional
+from typing import Iterator, Optional, List
 
 from errors import BaseMovementError
 
@@ -82,7 +82,10 @@ class Square(object):
             return max(abs(sq1.x - sq2.x), abs(sq1.y - sq2.y)) == 1
 
     def __add__(self, delta: 'Delta'):
-        return MoveOperator.sq_add_delta(self, delta)
+        return self.__class__(x=(self.x + delta.x), y=(self.y + delta.y))
+
+    def __sub__(self, sq: 'Square'):
+        return Delta(x=(self.x - sq.x), y=(self.y - sq.y))
 
 
 class Piece(object):
@@ -446,81 +449,38 @@ class Delta(object):
     def __bool__(self):
         return self.moved()
 
-    def passes_from(self, sq):
-        return []
+    @property
+    def unit(self):
+        return self.__class__(
+            x=(self.x // abs(self.x or 1)),
+            y=(self.y // abs(self.y or 1))
+        )
 
 
-class MovePath(Delta):
-    """a vertical, horizontal or diagonal move path"""
-
-    class InvalidPath(ValueError):
-        pass
-
-    def __init__(self, x, y):
-        super(MovePath, self).__init__(x, y)
-
-        if self.moved():
-            if x == 0:
-                # vertical path
-                pass
-
-            elif y == 0:
-                # horizontal path
-                pass
-
-            elif abs(x) == abs(y):
-                # diagonal path
-                pass
-
-            else:
-                raise self.InvalidPath((x, y))
-
-        self.unit_x = x // abs(x) if x else 0
-        self.unit_y = y // abs(y) if y else 0
-
-    def passes(self) -> Iterator[Delta]:
-        if self.moved():
-            delta = Delta(x=self.unit_x, y=self.unit_y)
-
-            for i in range(1, self.x):
-                yield delta * i
-
-    def passes_from(self, sq: Square):
-        return [sq + d for d in self.passes()]
+class InvalidPath(ValueError):
+    pass
 
 
-class MoveOperator(object):
-    @staticmethod
-    def sq_sub_sq(sqa: Square, sqb: Square, delta_type=None):
-        delta_type = delta_type or Delta
-        return delta_type(x=(sqa.x - sqb.x), y=(sqa.y - sqb.y))
+def passes(start: Square, end: Square = None, delta: Delta = None, straight_only=True) -> List[Square]:
+    if end and delta:
+        raise ValueError('either end or delta should be given')
 
-    @staticmethod
-    def sq_add_delta(sq: Square, d: Delta):
-        return Square(x=(sq.x + d.x), y=(sq.y + d.y))
+    if end:
+        delta = end - start
 
-    @staticmethod
-    def sq_sub_delta(sq: Square, d: Delta):
-        return Square(x=(sq.x - d.x), y=(sq.y - d.y))
+    err = None
 
-    def __check_value(self):
-        if self.start and self.end and (self.delta is None):
-            self.delta = self.sq_sub_sq(self.end, self.start, delta_type=self.delta_type)
+    if delta.x != 0 and delta.y != 0 and abs(delta.x) != abs(delta.y):
+        err = InvalidPath((delta.x, delta.y))
 
-        elif self.start and self.delta and (self.end is None):
-            self.end = self.sq_add_delta(self.start, d=self.delta)
+    if err:
+        if straight_only:
+            raise err
+        else:
+            return []
 
-        elif self.end and self.delta and (self.start is None):
-            self.start = self.sq_sub_delta(self.end, d=self.delta)
-
-    def __init__(self, start=None, end=None, delta=None, delta_type=None):
-        self.delta_type = delta_type or Delta
-
-        self.start: Optional[Square] = start
-        self.end: Optional[Square] = end
-        self.delta: Optional[Delta] = delta
-
-        self.__check_value()
+    unit = delta.unit
+    return [start + (unit * i) for i in range(1, delta.dis)]
 
 
 class RuleStatus(object):
@@ -581,19 +541,17 @@ def validate_movement(chess, mv: Movement):
         return RuleBroken('There\'s nothing to capture')
 
     # check move path
-
-    del_typ = Delta if pi.job == Job.KNIGHT else MovePath
-
     try:
-        delta = MoveOperator(start=mv.frm, end=mv.to, delta_type=del_typ).delta
-        passes = delta.passes_from(mv.frm)
-    except MovePath.InvalidPath:
+        delta = mv.to - mv.frm
+        pss = passes(start=mv.frm, delta=delta, straight_only=False)
+
+    except InvalidPath:
         return RuleBroken('No piece can fly')
 
     if not delta.moved():
         return RuleBroken('The piece doesnt move')
 
-    for pss_sq in passes:
+    for pss_sq in pss:
         _pi = chess.square_to_piece.get(pss_sq)
         if _pi:
             return RuleBroken('Another piece is in the way')

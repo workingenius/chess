@@ -2,7 +2,7 @@ import itertools
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
-from typing import Iterator, Optional, List
+from typing import Iterator, Optional, List, Tuple
 
 from errors import BaseMovementError
 
@@ -641,6 +641,21 @@ class Chess(object):
 
         return pi_lst
 
+    def find_king(self, camp=None) -> Tuple[Square, Piece]:
+        """Find out your king"""
+
+        if camp is None:
+            camp = self.turn
+
+        def find_out_king():
+            for pi in self.pieces(camp=camp):
+                if pi.job == Job.KING:
+                    return pi
+
+        ki = find_out_king()
+
+        return self.piece_to_square[ki], ki
+
 
 class Movement(object):
     """movement that don't take chess rule into account"""
@@ -723,8 +738,13 @@ class Delta(object):
 
     @classmethod
     def as_camp(cls, forward=None, backward=None, leftward=None, rightward=None, camp=Camp.A):
-        assert (forward and not backward) or (not forward and backward), 'forward and backward cant both exist'
-        assert (leftward and not rightward) or (not leftward and rightward), 'leftward and rightward cant both exist'
+        assert not (forward and backward), 'forward and backward cant both exist'
+        assert not (leftward and rightward), 'leftward and rightward cant both exist'
+
+        forward = forward or 0
+        backward = backward or 0
+        leftward = leftward or 0
+        rightward = rightward or 0
 
         if camp == Camp.A:
             x = rightward or -leftward
@@ -820,6 +840,9 @@ class Delta(object):
 
     def __mul__(self, other):
         return self.__class__(x=self.x * other, y=self.y * other)
+
+    def __neg__(self):
+        return self.__class__(x=-self.x, y=-self.y)
 
     def moved(self):
         return self.x != 0 or self.y != 0
@@ -918,6 +941,10 @@ class RuleBroken(RuleStatus, Exception):
         return False
 
 
+class KingInDanger(RuleBroken):
+    pass
+
+
 def validate_movement(chess, mv: Movement):
     # REWRITING validate_movement
 
@@ -952,26 +979,18 @@ def validate_movement(chess, mv: Movement):
     try:
         pi.is_valid_movement(chess, mv)
 
-        def find_out_our_king():
-            for pi in chess.pieces(camp=chess.turn):
-                if pi.job == Job.KING:
-                    return pi
-
         def king_location():
             if pi.job == Job.KING:
                 return mv.to
             else:
-                return chess.piece_to_square[find_out_our_king()]
+                ki_sq, ki_pi = chess.find_king(camp=chess.turn)
+                return ki_pi
 
         king_loc = king_location()
 
         # traverse piece from other camp
-        for other_piece in chess.pieces(camp=chess.turn.another):
-            o_pi: Piece = other_piece
-
-            for loc in o_pi.attack_lst(chess):
-                if loc == king_loc:
-                    raise RuleBroken('King in danger')
+        if any(piece_lst_attacks(chess, sq=king_loc, camp=chess.turn.another)):
+            raise KingInDanger('King in danger')
 
     except RuleBroken as rb:
         return rb
@@ -990,6 +1009,60 @@ class Player(object):
     @property
     def camp(self):
         return self._camp
+
+
+def generate_movements(chess, camp):
+    """All possible movements that will not put King in danger"""
+
+    for pi in chess.pieces(camp):
+        pi: Piece = pi
+        for mv in pi.movement_lst(chess):
+            try:
+                validate_movement(chess, mv)
+            except KingInDanger:
+                pass
+            else:
+                yield mv
+
+
+class ChessResult(object):
+    pass
+
+
+class Stalemate(ChessResult):
+    def format(self, camp=None):
+        return 'Draw'
+
+    def __str__(self):
+        return self.format()
+
+
+class Checkmate(ChessResult):
+    def __init__(self, winner: Camp):
+        self.winner = winner
+        self.loser = winner.another
+
+    def format(self, camp=None):
+        if camp is None:
+            return '{} win the chess'.format(self.winner)
+        elif camp == self.winner:
+            return 'You win'
+        elif camp == self.loser:
+            return 'You lose'
+        else:
+            raise ValueError
+
+    def __str__(self):
+        return self.format()
+
+
+def piece_lst_attacks(chess, sq: Square, camp=None) -> Iterator[Piece]:
+    """Find out all pieces from <camp> that attacks <sq>"""
+    for pi in chess.pieces(camp=camp):
+        for att_sq in pi.attack_lst(chess):
+            if att_sq == sq:
+                yield pi
+                break
 
 
 def play(player_a, player_b):
@@ -1024,6 +1097,15 @@ def play(player_a, player_b):
         #    generate_movements(chess: Chess, camp: Camp) -> List[Movement]
         #    is_king_in_danger(chess: Chess, camp: Camp) -> bool
 
+        if not list(generate_movements(chess, camp=chess.turn)):
+            # no possible movements anymore
+
+            ki_sq, ki_pi = chess.find_king()
+            if any(piece_lst_attacks(chess, sq=ki_sq, camp=chess.turn.another)):
+                return Checkmate(chess.turn.another)
+            else:
+                return Stalemate()
+
 
 if __name__ == '__main__':
-    play(Player(Camp.A), Player(Camp.B))
+    print(play(Player(Camp.A), Player(Camp.B)))

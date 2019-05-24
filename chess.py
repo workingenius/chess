@@ -4,8 +4,6 @@ from functools import wraps
 from string import ascii_lowercase
 from typing import Iterator, List, Tuple
 
-from errors import BaseMovementError
-
 BOARD_SIZE = 8
 
 
@@ -527,14 +525,14 @@ def cons_piece(camp, job):
 
 class Chess(object):
     @classmethod
-    def setup(cls):
+    def setup(cls, initial=None):
 
         def s(name):
             return Square.by_name(name)
 
         c = Chess()
 
-        locations = [
+        initial = initial or [
             [Camp.A, Job.CASTLE, s('a1')],
             [Camp.A, Job.KNIGHT, s('b1')],
             [Camp.A, Job.BISHOP, s('c1')],
@@ -572,7 +570,7 @@ class Chess(object):
             [Camp.B, Job.PAWN, s('h7')],
         ]
 
-        for loc in locations:
+        for loc in initial:
             c.put(piece=cons_piece(camp=loc[0], job=loc[1]), square=loc[2])
 
         return c
@@ -677,11 +675,15 @@ class Chess(object):
 class Movement(object):
     """movement that don't take chess rule into account"""
 
+
+    class MovementError(Exception):
+        pass
+
     def __init__(self, frm, to=None, capture=None, replace=None, sub_movement: 'Movement' = None):
         self.frm = frm
 
         if to is None and capture is None:
-            raise BaseMovementError('either move to or capture should given')
+            raise self.MovementError('either move to or capture should given')
 
         # two arguments for move from and move to respectively,
         # for the sake of "En passant"
@@ -695,16 +697,16 @@ class Movement(object):
 
     def apply_to(self, chess):
         if chess.square_to_piece.get(self.frm) is None:
-            raise BaseMovementError('{} is empty so nothing to move'.format(self.frm.format()))
+            raise self.MovementError('{} is empty so nothing to move'.format(self.frm.format()))
 
         if not self.capture and self.to and chess.square_to_piece.get(self.to):
-            raise BaseMovementError('{} is occupied by another piece'.format(self.to.format()))
+            raise self.MovementError('{} is occupied by another piece'.format(self.to.format()))
 
         if self.capture and chess.square_to_piece.get(self.capture) is None:
-            raise BaseMovementError('{} is empty so nothing to capture'.format(self.capture.format()))
+            raise self.MovementError('{} is empty so nothing to capture'.format(self.capture.format()))
 
         if self.replace and self.replace in chess.piece_to_square:
-            raise BaseMovementError('the piece to replace is on the board: {}'.format(self.replace.format()))
+            raise self.MovementError('the piece to replace is on the board: {}'.format(self.replace.format()))
 
         pie = chess.remove(square=self.frm)
 
@@ -996,6 +998,9 @@ def validate_movement(chess, mv: Movement):
     pi: Piece = chess.square_to_piece.get(mv.frm)
     if pi is None:
         raise RuleBroken('There is not a piece')
+
+    if not mv.to.is_on_board():
+        pass
 
     if pi.camp != chess.turn:
         raise RuleBroken('You can\'t move your partner\'s piece')

@@ -1,5 +1,6 @@
 import itertools
 from enum import Enum
+from functools import wraps
 from string import ascii_lowercase
 from typing import Iterator, Optional, List
 
@@ -95,6 +96,17 @@ def _on_board(sq_lst):
     return filter(lambda x: x.is_on_board(), sq_lst)
 
 
+def within_board(f):
+
+    @wraps(f)
+    def ff(*args, **kwargs):
+        for sq in f(*args, **kwargs):
+            if _on_board(sq):
+                yield sq
+
+    return ff
+
+
 def _has_enemy(chess, camp, at):
     return chess.square_to_piece.get(at) and chess.square_to_piece.get(at).camp != camp
 
@@ -134,9 +146,63 @@ class Piece(object):
         """generate all movements launched by the piece"""
         raise NotImplementedError
 
-    def is_valid_movement(self, chess, mv: 'Movement') -> bool:
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         """if the movement <mv> about the job is valid. If not, tell reason"""
         raise NotImplementedError
+
+    # rule helpers
+
+    def assert_valid_capture(self, chess, capture):
+        ca = chess.square_to_piece.get(capture)
+
+        if ca is None:
+            raise RuleBroken('There is no piece to capture')
+
+        if ca.camp != self.camp:
+            pass
+        else:
+            raise RuleBroken('You can not capture piece of your own camp')
+
+    def assert_valid_move(self, chess, move: Square):
+        if _has_enemy(chess, self.camp, at=move) or _has_alias(chess, self.camp, at=move):
+            raise RuleBroken('You can not move to a square with piece')
+
+    def assert_clear_path(self, chess, path):
+        raise NotImplemented
+
+    def move_to_or_capture(self, chess, frm, to):
+        if _has_enemy(chess, camp=self.camp, at=to):
+            return Movement(frm=frm, capture=to)
+        elif _has_alias(chess, camp=self.camp, at=to):
+            return
+        else:
+            return Movement(frm=frm, to=to)
+
+    def check_target(self, chess, frm, to_lst):
+        for to in to_lst:
+            mv = self.move_to_or_capture(chess, frm, to)
+            if mv:
+                yield mv
+
+    def extend_till_hidden(self, chess, square, direction):
+        hidden = False
+
+        for dis in range(1, BOARD_SIZE):
+            if hidden:
+                break
+
+            delta = direction * dis
+            to = square + delta
+
+            if _has_enemy(chess, self.camp, at=to):
+                hidden = True
+                yield to
+
+            elif _has_alias(chess, self.camp, at=to):
+                break
+
+            else:
+                yield to
 
 
 class PKing(Piece):
@@ -242,24 +308,203 @@ class PPawn(Piece):
                 for mv in mv_with_promotion(frm=at, capture=cp):
                     yield mv
 
-    def is_valid_movement(self, chess, mv: 'Movement') -> bool:
-        pass
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+        try:
+
+            # check promotion
+            if mv.replace:
+                if not mv.to.is_ending_line(chess.turn):
+                    raise RuleBroken('Pawns can promote only when they reach the ending line')
+
+                if mv.replace.job == Job.KING:
+                    raise RuleBroken('A pawn can not promote to a king')
+
+            delta = mv.to - mv.frm
+
+            # check movement
+            if not delta.is_forward(camp=self.camp, just=False):
+                raise RuleBroken('A pawn can only proceed')
+
+            if delta.is_forward(camp=chess.turn, just=True):
+                # is moving ahead
+
+                if delta.dis > 2:
+                    raise RuleBroken('The pawn moves too fast')
+
+                # check starting charge
+                if delta.dis == 2:
+                    if not mv.frm.is_starting_line(camp=chess.turn, index=1):
+                        raise RuleBroken('A pawn can only charge from his beginning point')
+
+                if mv.capture:
+                    raise RuleBroken('Pawns cant attack ahead')
+
+            else:
+                # is attacking
+
+                pawn_cap_rule_caption = 'A pawn can only attack enemy in diagonal direction by one square'
+
+                if mv.capture is None:
+                    raise RuleBroken(pawn_cap_rule_caption)
+
+                if delta.dis != 1:
+                    raise RuleBroken(pawn_cap_rule_caption)
+
+                self.assert_valid_capture(chess, capture=mv.capture)
+
+                # TODO: check en passant
+
+        except RuleBroken as rb:
+            return rb
+
+        return RULE_OK
 
 
 class PKnight(Piece):
     job = Job.KNIGHT
 
+    @within_board
+    def attack_lst(self, chess) -> Iterator[Square]:
+        for d in L_SHAPES:
+            yield chess.piece_to_square[self] + d
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+        try:
+            delta = mv.to - mv.frm
+            if not delta.is_l_shape:
+                raise RuleBroken('Knight can only move in l shape')
+
+            if mv.capture:
+                self.assert_valid_capture(chess, mv.capture)
+
+            else:
+                self.assert_valid_move(chess, mv.to)
+
+        except RuleBroken as rb:
+            return rb
+
+        return RULE_OK
+
 
 class PQueen(Piece):
     job = Job.QUEEN
+
+    @within_board
+    def attack_lst(self, chess) -> Iterator[Square]:
+        for dir in ALL_DIRECTIONS:
+            for to in self.extend_till_hidden(chess, chess.piece_to_square[self], dir):
+                yield to
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+        try:
+            # valid direction
+            try:
+                pss = passes(start=mv.frm, end=mv.to, straight_only=True)
+            except InvalidPath:
+                raise RuleBroken('Queen can only move straightly')
+
+            # valid moving path
+            self.assert_clear_path(chess, pss)
+
+            if mv.capture:
+                self.assert_valid_capture(chess, mv.capture)
+            else:
+                self.assert_valid_move(chess, mv.to)
+
+        except RuleBroken as rb:
+            return rb
+
+        return RULE_OK
 
 
 class PCastle(Piece):
     job = Job.CASTLE
 
+    @within_board
+    def attack_lst(self, chess) -> Iterator[Square]:
+        for dir in [Delta(0, 1), Delta(0, -1), Delta(1, 0), Delta(-1, 0)]:
+            for to in self.extend_till_hidden(chess, chess.piece_to_square[self], dir):
+                yield to
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+        try:
+            # valid direction
+            castle_rule_caption = 'Castle can only move in vertical or horizontal lines'
+
+            try:
+                delta = mv.frm - mv.to
+                pss = passes(start=mv.frm, delta=delta, straight_only=True)
+            except InvalidPath:
+                raise RuleBroken(castle_rule_caption)
+
+            if delta.is_horizontal or delta.is_vertical:
+                pass
+            else:
+                raise RuleBroken(castle_rule_caption)
+
+            # valid moving path
+            self.assert_clear_path(chess, pss)
+
+            if mv.capture:
+                self.assert_valid_capture(chess, mv.capture)
+            else:
+                self.assert_valid_move(chess, mv.to)
+
+        except RuleBroken as rb:
+            return rb
+
+        return RULE_OK
+
 
 class PBishop(Piece):
     job = Job.BISHOP
+
+    @within_board
+    def attack_lst(self, chess) -> Iterator[Square]:
+        for dir in [Delta(1, 1), Delta(-1, -1), Delta(1, -1), Delta(-1, 1)]:
+            for to in self.extend_till_hidden(chess, chess.piece_to_square[self], dir):
+                yield to
+
+    def movement_lst(self, chess) -> Iterator['Movement']:
+        return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
+
+    def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+        try:
+            # valid direction
+            castle_rule_caption = 'Bishop can only move in diagonal lines'
+
+            try:
+                delta = mv.frm - mv.to
+                pss = passes(start=mv.frm, delta=delta, straight_only=True)
+            except InvalidPath:
+                raise RuleBroken(castle_rule_caption)
+
+            if delta.is_diagonal:
+                pass
+            else:
+                raise RuleBroken(castle_rule_caption)
+
+            # valid moving path
+            self.assert_clear_path(chess, pss)
+
+            if mv.capture:
+                self.assert_valid_capture(chess, mv.capture)
+            else:
+                self.assert_valid_move(chess, mv.to)
+
+        except RuleBroken as rb:
+            return rb
+
+        return RULE_OK
 
 
 def cons_piece(camp, job):
@@ -538,6 +783,10 @@ class Delta(object):
     def is_south_east(self):
         return self.x > 0 and self.y < 0
 
+    @property
+    def is_diagonal(self):
+        return self.is_north_west or self.is_north_east or self.is_south_west or self.is_south_east
+
     def is_forward(self, camp, just=True):
         if just:
             if camp == Camp.A:
@@ -597,6 +846,18 @@ ALL_DIRECTIONS = [
     Delta(-1, -1),  # south west
     Delta(-1, 0),  # west
     Delta(-1, 1),  # north west
+]
+
+
+L_SHAPES = [
+    Delta(-2, 1),
+    Delta(-1, 2),
+    Delta(1, 2),
+    Delta(2, 1),
+    Delta(2, -1),
+    Delta(1, -2),
+    Delta(-1, -2),
+    Delta(-2, -1)
 ]
 
 

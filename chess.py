@@ -2,11 +2,19 @@ import itertools
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
-from typing import Iterator, Optional, List, Tuple
+from typing import Iterator, List, Tuple
 
 from errors import BaseMovementError
 
 BOARD_SIZE = 8
+
+
+def rule_validator(func):
+    """Tag a function as a rule validator,
+
+    which should return RuleOk object if rule is ok, and raise RuleBroken if it does not
+    """
+    return func
 
 
 class Color(Enum):
@@ -156,6 +164,7 @@ class Piece(object):
         """generate all movements launched by the piece"""
         raise NotImplementedError
 
+    @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         """if the movement <mv> about the job is valid. If not, tell reason"""
         raise NotImplementedError
@@ -241,6 +250,7 @@ class PKing(Piece):
 
         # TODO: CASTLING
 
+    @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         king_rule_caption = 'King only move straight by one square'
 
@@ -317,6 +327,7 @@ class PPawn(Piece):
                 for mv in mv_with_promotion(frm=at, capture=cp):
                     yield mv
 
+    @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
 
         # check promotion
@@ -381,6 +392,7 @@ class PKnight(Piece):
     def movement_lst(self, chess) -> Iterator['Movement']:
         return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
 
+    @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         delta = mv.to - mv.frm
         if not delta.is_l_shape:
@@ -406,6 +418,7 @@ class PQueen(Piece):
     def movement_lst(self, chess) -> Iterator['Movement']:
         return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
 
+    @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         # valid direction
         try:
@@ -436,6 +449,7 @@ class PCastle(Piece):
     def movement_lst(self, chess) -> Iterator['Movement']:
         return self.check_target(chess, chess.piece_to_square[self], self.attack_lst(chess))
 
+    @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         castle_rule_caption = 'Castle can only move in vertical or horizontal lines'
 
@@ -954,6 +968,7 @@ class KingInDanger(RuleBroken):
     pass
 
 
+@rule_validator
 def validate_movement(chess, mv: Movement):
     # REWRITING validate_movement
 
@@ -980,29 +995,25 @@ def validate_movement(chess, mv: Movement):
 
     pi: Piece = chess.square_to_piece.get(mv.frm)
     if pi is None:
-        return RuleBroken('There is not a piece')
+        raise RuleBroken('There is not a piece')
 
     if pi.camp != chess.turn:
-        return RuleBroken('You can\'t move your partner\'s piece')
+        raise RuleBroken('You can\'t move your partner\'s piece')
 
-    try:
-        pi.is_valid_movement(chess, mv)
+    pi.is_valid_movement(chess, mv)
 
-        def king_location():
-            if pi.job == Job.KING:
-                return mv.to
-            else:
-                ki_sq, ki_pi = chess.find_king(camp=chess.turn)
-                return ki_sq
+    def king_location():
+        if pi.job == Job.KING:
+            return mv.to
+        else:
+            ki_sq, ki_pi = chess.find_king(camp=chess.turn)
+            return ki_sq
 
-        king_loc = king_location()
+    king_loc = king_location()
 
-        # traverse piece from other camp
-        if any(piece_lst_attacks(chess, sq=king_loc, camp=chess.turn.another)):
-            raise KingInDanger('King in danger')
-
-    except RuleBroken as rb:
-        return rb
+    # traverse piece from other camp
+    if any(piece_lst_attacks(chess, sq=king_loc, camp=chess.turn.another)):
+        raise KingInDanger('King in danger')
 
     return RULE_OK
 
@@ -1064,7 +1075,11 @@ def generate_movements(chess, camp):
     for pi in chess.pieces(camp):
         pi: Piece = pi
         for mv in pi.movement_lst(chess):
-            if validate_movement(chess, mv):
+            try:
+                validate_movement(chess, mv)
+            except RuleBroken:
+                pass
+            else:
                 yield mv
 
 
@@ -1165,17 +1180,21 @@ def play(player_a, player_b):
         mv = player(chess)
         if isinstance(mv, ResignRequest):
             return Resign(resigner=chess.turn)
-
         assert isinstance(mv, Movement)
-        rule_check = validate_movement(chess, mv)
 
-        while not rule_check.ok:
-            print(rule_check)
-            print()
+        while True:
+            try:
+                validate_movement(chess, mv)
+            except RuleBroken as rb:
+                print(rb)
+                print()
 
-            mv = player(chess)
-            assert isinstance(mv, Movement)
-            rule_check = validate_movement(chess, mv)
+                mv = player(chess)
+                if isinstance(mv, ResignRequest):
+                    return Resign(resigner=chess.turn)
+                assert isinstance(mv, Movement)
+            else:
+                break
 
         chess = mv.apply_to(chess)
 

@@ -56,6 +56,9 @@ class Square(object):
     def __str__(self):
         return 'square {}'.format(self.name)
 
+    def __repr__(self):
+        return 'Square(x={s.x}, y={s.y})'.format(s=self)
+
     @classmethod
     def by_name(cls, name):
         column = name[0]
@@ -138,6 +141,9 @@ class Piece(object):
         else:
             return '{} of {}'.format(self.job.value, self.camp.value)
 
+    def __repr__(self):
+        return '{cls}({cm})'.format(cls=self.__class__.__name__, cm=self.camp)
+
     def format(self):
         return str(self)
 
@@ -200,12 +206,9 @@ class Piece(object):
             delta = direction * dis
             to = square + delta
 
-            if _has_enemy(chess, self.camp, at=to):
+            if _has_piece(chess, at=to):
                 hidden = True
                 yield to
-
-            elif _has_alias(chess, self.camp, at=to):
-                break
 
             else:
                 yield to
@@ -710,6 +713,12 @@ class Movement(object):
         else:
             raise ValueError('cant get here')
 
+    def __str__(self):
+        return self.format()
+
+    def __repr__(self):
+        return str(self)
+
     def format(self):
         return 'movement {}'.format(self.name)
 
@@ -984,7 +993,7 @@ def validate_movement(chess, mv: Movement):
                 return mv.to
             else:
                 ki_sq, ki_pi = chess.find_king(camp=chess.turn)
-                return ki_pi
+                return ki_sq
 
         king_loc = king_location()
 
@@ -1004,11 +1013,21 @@ class Player(object):
 
     def __call__(self, chess):
         try:
-            cmd = input('{} turn >> '.format(self.camp)).strip().lower()
+            cmd = input('{} turn >> '.format(self.camp)).lower()
         except EOFError:
             cmd = 'resign'
 
-        if cmd.lower() == 'resign':
+        return self.parse_command(cmd)
+
+    @staticmethod
+    def parse_command(cmd):
+        # comments after "#"
+        if '#' in cmd:
+            cmd = cmd.split('#')[0]
+
+        cmd = cmd.lower().strip()
+
+        if cmd == 'resign':
             return ResignRequest()
         else:
             return _m(cmd)
@@ -1018,22 +1037,40 @@ class Player(object):
         return self._camp
 
 
+class PlayerByManual(Player):
+    def __init__(self, camp, movement_lst):
+        super(PlayerByManual, self).__init__(camp)
+        self.movement_lst = movement_lst
+        self.cur = 0
+
+    def __call__(self, chess):
+        if self.cur < len(self.movement_lst):
+            self.cur += 1
+            return self.parse_command(self.movement_lst[self.cur - 1])
+        else:
+            return ResignRequest()
+
+    @classmethod
+    def pair_by_manual_text(cls, text):
+        cmd_lst = [t.strip() for t in text.split('\n') if t.strip()]
+        a_cmd_lst = [cmd for i, cmd in enumerate(cmd_lst) if i % 2 == 0]
+        b_cmd_lst = [cmd for i, cmd in enumerate(cmd_lst) if i % 2 == 1]
+        return cls(Camp.A, movement_lst=a_cmd_lst), cls(Camp.B, movement_lst=b_cmd_lst)
+
+
 def generate_movements(chess, camp):
     """All possible movements that will not put King in danger"""
 
     for pi in chess.pieces(camp):
         pi: Piece = pi
         for mv in pi.movement_lst(chess):
-            try:
-                validate_movement(chess, mv)
-            except KingInDanger:
-                pass
-            else:
+            if validate_movement(chess, mv):
                 yield mv
 
 
 class ChessResult(object):
-    pass
+    def __eq__(self, other):
+        return self.__class__ == other.__class__ and self.winner == other.winner
 
 
 class Stalemate(ChessResult):
@@ -1107,23 +1144,6 @@ def play(player_a, player_b):
         print()
         print(chess.format())
 
-        mv = player(chess)
-        if isinstance(mv, ResignRequest):
-            return Resign(resigner=chess.turn)
-
-        assert isinstance(mv, Movement)
-        rule_check = validate_movement(chess, mv)
-
-        while not rule_check.ok:
-            print(rule_check)
-            print()
-
-            mv = player(chess)
-            assert isinstance(mv, Movement)
-            rule_check = validate_movement(chess, mv)
-
-        chess = mv.apply_to(chess)
-
         # See if checkmate or stalemate happens
         #
         # + if the other camp have no movement to save their king -- checkmate
@@ -1141,6 +1161,23 @@ def play(player_a, player_b):
                 return Checkmate(chess.turn.another)
             else:
                 return Stalemate()
+
+        mv = player(chess)
+        if isinstance(mv, ResignRequest):
+            return Resign(resigner=chess.turn)
+
+        assert isinstance(mv, Movement)
+        rule_check = validate_movement(chess, mv)
+
+        while not rule_check.ok:
+            print(rule_check)
+            print()
+
+            mv = player(chess)
+            assert isinstance(mv, Movement)
+            rule_check = validate_movement(chess, mv)
+
+        chess = mv.apply_to(chess)
 
 
 if __name__ == '__main__':

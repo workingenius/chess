@@ -1003,8 +1003,15 @@ class Player(object):
         self._camp = camp
 
     def __call__(self, chess):
-        cmd = input('{} turn >> '.format(self.camp)).strip().lower()
-        return _m(cmd)
+        try:
+            cmd = input('{} turn >> '.format(self.camp)).strip().lower()
+        except EOFError:
+            cmd = 'resign'
+
+        if cmd.lower() == 'resign':
+            return ResignRequest()
+        else:
+            return _m(cmd)
 
     @property
     def camp(self):
@@ -1030,6 +1037,9 @@ class ChessResult(object):
 
 
 class Stalemate(ChessResult):
+    winner = None
+    loser = None
+
     def format(self, camp=None):
         return 'Draw'
 
@@ -1044,11 +1054,34 @@ class Checkmate(ChessResult):
 
     def format(self, camp=None):
         if camp is None:
-            return '{} win the chess'.format(self.winner)
+            return '{} win the game'.format(self.winner)
         elif camp == self.winner:
             return 'You win'
         elif camp == self.loser:
             return 'You lose'
+        else:
+            raise ValueError
+
+    def __str__(self):
+        return self.format()
+
+
+class ResignRequest(object):
+    pass
+
+
+class Resign(ChessResult):
+    def __init__(self, resigner):
+        self.winner = resigner.another
+        self.loser = resigner
+
+    def format(self, camp=None):
+        if camp is None:
+            return '{} resigned'.format(self.loser)
+        elif camp == self.winner:
+            return 'You win the game as your opponent resigned'
+        elif camp == self.loser:
+            return 'You resigned and lose the game'
         else:
             raise ValueError
 
@@ -1075,6 +1108,9 @@ def play(player_a, player_b):
         print(chess.format())
 
         mv = player(chess)
+        if isinstance(mv, ResignRequest):
+            return Resign(resigner=chess.turn)
+
         assert isinstance(mv, Movement)
         rule_check = validate_movement(chess, mv)
 

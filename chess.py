@@ -294,14 +294,14 @@ class PPawn(Piece):
 
         # check charge
         if at.is_starting_line(index=1, camp=self.camp):
-            d = Delta.as_camp(forward=2)
+            d = Delta.as_camp(forward=2, camp=self.camp)
             to = at + d
             if not in_the_way(chess, passes(at, delta=d)) and not _has_piece(chess, at=to):
                 # no need to check for promotion in starting point
                 yield Movement(frm=at, to=to)
 
         # one step forward
-        d = Delta.as_camp(forward=1)
+        d = Delta.as_camp(forward=1, camp=self.camp)
         to = at + d
         if not _has_piece(chess, at=to):
             for mv in mv_with_promotion(frm=at, to=to):

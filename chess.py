@@ -818,7 +818,7 @@ class Delta(object):
 
     @property
     def dis(self) -> int:
-        return max(self.x, self.y)
+        return max(abs(self.x), abs(self.y))
 
     def __mul__(self, other):
         return self.__class__(x=self.x * other, y=self.y * other)

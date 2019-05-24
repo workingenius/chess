@@ -1070,6 +1070,12 @@ class PlayerByManual(Player):
         return cls(Camp.A, movement_lst=a_cmd_lst), cls(Camp.B, movement_lst=b_cmd_lst)
 
 
+class RandomPlayer(Player):
+    def __call__(self, chess):
+        mv_lst = list(generate_movements(chess, self.camp))
+        return mv_lst[random.randint(0, len(mv_lst) - 1)]
+
+
 def generate_movements(chess, camp):
     """All possible movements that will not put King in danger"""
 
@@ -1201,4 +1207,4 @@ def play(player_a, player_b):
 
 
 if __name__ == '__main__':
-    print(play(Player(Camp.A), Player(Camp.B)))
+    print(play(Player(Camp.A), RandomPlayer(Camp.B)))

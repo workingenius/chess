@@ -22,8 +22,11 @@ class Test(unittest.TestCase):
 
     def test_move_out_of_board(self):
         chess = Chess.setup(initial=[
-            [Camp.A, Job.CASTLE, Square.by_name('a1')]
+            [Camp.A, Job.CASTLE, Square.by_name('a1')],
+            [Camp.A, Job.KING, Square.by_name('a2')],
+            [Camp.B, Job.KING, Square.by_name('h7')],
         ])
+        chess.turn = Camp.A
         mv = Movement(frm=Square.by_name('a1'), to=Square.by_name('a0'))
 
         with self.assertRaises(RuleBroken):

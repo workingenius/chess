@@ -91,13 +91,6 @@ class Square(object):
         else:
             return self.y == (BOARD_SIZE - 1 - index)
 
-    @staticmethod
-    def is_adjacent(sq1, sq2, horizontally=False):
-        if horizontally:
-            return sq1.y == sq2.y and abs(sq1.x - sq2.x) == 1
-        else:
-            return max(abs(sq1.x - sq2.x), abs(sq1.y - sq2.y)) == 1
-
     def __add__(self, delta: 'Delta'):
         return self.__class__(x=(self.x + delta.x), y=(self.y + delta.y))
 
@@ -108,14 +101,10 @@ class Square(object):
         return 0 <= self.x < BOARD_SIZE and 0 <= self.y < BOARD_SIZE
 
 
-def _on_board(sq_lst):
-    return filter(lambda x: x.is_on_board(), sq_lst)
-
-
 def within_board(f):
     @wraps(f)
     def ff(*args, **kwargs):
-        return _on_board(f(*args, **kwargs))
+        return filter(lambda x: x.is_on_board(), f(*args, **kwargs))
 
     return ff
 
@@ -185,9 +174,8 @@ class Piece(object):
             raise RuleBroken('You can not move to a square with piece')
 
     def assert_clear_path(self, chess, path: Iterator[Square]):
-        for sq in path:
-            if _has_piece(chess, at=sq):
-                raise RuleBroken('You can not move over other pieces')
+        if in_the_way(chess, path):
+            raise RuleBroken('You can not move over other pieces')
 
     def move_to_or_capture(self, chess, frm, to):
         if _has_enemy(chess, camp=self.camp, at=to):
@@ -675,7 +663,6 @@ class Chess(object):
 class Movement(object):
     """movement that don't take chess rule into account"""
 
-
     class MovementError(Exception):
         pass
 
@@ -1000,7 +987,7 @@ def validate_movement(chess, mv: Movement):
         raise RuleBroken('There is not a piece')
 
     if not mv.to.is_on_board():
-        pass
+        raise RuleBroken('You cant move out of board')
 
     if pi.camp != chess.turn:
         raise RuleBroken('You can\'t move your partner\'s piece')

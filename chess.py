@@ -126,6 +126,14 @@ class Piece(object):
     def job(self):
         raise NotImplementedError
 
+    @property
+    def abbr_char(self):
+        raise NotImplementedError
+
+    @property
+    def abbr(self):
+        return self.abbr_char.upper() if self.camp == Camp.A else self.abbr_char.lower()
+
     def __init__(self, camp):
         self.camp = camp
         self.square = None
@@ -210,6 +218,7 @@ class Piece(object):
 
 
 class PKing(Piece):
+    abbr_char = 'K'
     job = Job.KING
 
     @within_board
@@ -260,6 +269,7 @@ class PKing(Piece):
 
 
 class PPawn(Piece):
+    abbr_char = 'P'
     job = Job.PAWN
 
     @within_board
@@ -368,6 +378,7 @@ class PPawn(Piece):
 
 
 class PKnight(Piece):
+    abbr_char = 'N'
     job = Job.KNIGHT
 
     @within_board
@@ -393,6 +404,7 @@ class PKnight(Piece):
 
 
 class PQueen(Piece):
+    abbr_char = 'Q'
     job = Job.QUEEN
 
     @within_board
@@ -424,6 +436,7 @@ class PQueen(Piece):
 
 
 class PCastle(Piece):
+    abbr_char = 'R'
     job = Job.CASTLE
 
     @within_board
@@ -463,6 +476,7 @@ class PCastle(Piece):
 
 
 class PBishop(Piece):
+    abbr_char = 'B'
     job = Job.BISHOP
 
     @within_board
@@ -617,17 +631,12 @@ class Chess(object):
                 ab_lst.append(ab)
             return ' '.join(ab_lst)
 
-        def job_abbr(job):
-            if job == Job.KING:
-                return 'Z'
-            else:
-                return job.value[0].upper()
-
         def piece_abbr(sq, p=None):
+            c = '.' if sq.color == Color.WHITE else '|'
             if p is None:
-                return '..' if sq.color == Color.WHITE else '||'
+                return c + c
             else:
-                return job_abbr(p.job) + p.camp.value[-1].lower()
+                return p.abbr + c
 
         lines = []
         for j in range(7, -1, -1):

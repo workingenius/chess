@@ -1,4 +1,5 @@
 import itertools
+import random
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
@@ -588,6 +589,14 @@ class Chess(object):
         self.turn = None  # who's turn
         self.history = []
 
+    def copy(self):
+        c = self.__class__()
+        c.square_to_piece = dict(self.square_to_piece)
+        c.piece_to_square = dict(self.piece_to_square)
+        c.turn = self.turn
+        c.history = list(self.history)
+        return c
+
     def put(self, piece, square):
         assert piece not in self.piece_to_square
         self.square_to_piece[square] = piece
@@ -1003,14 +1012,11 @@ def validate_movement(chess, mv: Movement):
 
     pi.is_valid_movement(chess, mv)
 
-    def king_location():
-        if pi.job == Job.KING:
-            return mv.to
-        else:
-            ki_sq, ki_pi = chess.find_king(camp=chess.turn)
-            return ki_sq
+    # check King safety
 
-    king_loc = king_location()
+    chess = chess.copy()
+    chess = mv.apply_to(chess)
+    king_loc, _ = chess.find_king(camp=chess.turn)
 
     # traverse piece from other camp
     if any(piece_lst_attacks(chess, sq=king_loc, camp=chess.turn.another)):

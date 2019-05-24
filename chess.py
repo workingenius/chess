@@ -18,6 +18,13 @@ class Camp(Enum):
     A = 'CAMP_A'
     B = 'CAMP_B'
 
+    @property
+    def another(self):
+        if self == Camp.A:
+            return Camp.B
+        elif self == Camp.B:
+            return Camp.A
+
 
 class Job(Enum):
     """which kind a piece is"""
@@ -99,9 +106,7 @@ def _on_board(sq_lst):
 def within_board(f):
     @wraps(f)
     def ff(*args, **kwargs):
-        for sq in f(*args, **kwargs):
-            if _on_board(sq):
-                yield sq
+        return _on_board(f(*args, **kwargs))
 
     return ff
 
@@ -265,8 +270,8 @@ class PPawn(Piece):
         #   If a pawn is beside an enemy pawn who has just charged two square,
         #   he can move diagonally as usual and attack back to capture the enemy pawn
 
-        yield chess.piece_to_square[self] + Delta.as_camp(forward=1, leftward=1)
-        yield chess.piece_to_square[self] + Delta.as_camp(forward=1, rightward=1)
+        yield chess.piece_to_square[self] + Delta.as_camp(forward=1, leftward=1, camp=self.camp)
+        yield chess.piece_to_square[self] + Delta.as_camp(forward=1, rightward=1, camp=self.camp)
 
         # TODO: en passant
 
@@ -628,6 +633,14 @@ class Chess(object):
 
         return '\n'.join(lines)
 
+    def pieces(self, camp=None):
+        pi_lst = self.piece_to_square.keys()
+
+        if camp:
+            pi_lst = filter(lambda p: p.camp == camp, pi_lst)
+
+        return pi_lst
+
 
 class Movement(object):
     """movement that don't take chess rule into account"""
@@ -938,6 +951,28 @@ def validate_movement(chess, mv: Movement):
 
     try:
         pi.is_valid_movement(chess, mv)
+
+        def find_out_our_king():
+            for pi in chess.pieces(camp=chess.turn):
+                if pi.job == Job.KING:
+                    return pi
+
+        def king_location():
+            if pi.job == Job.KING:
+                return mv.to
+            else:
+                return chess.piece_to_square[find_out_our_king()]
+
+        king_loc = king_location()
+
+        # traverse piece from other camp
+        for other_piece in chess.pieces(camp=chess.turn.another):
+            o_pi: Piece = other_piece
+
+            for loc in o_pi.attack_lst(chess):
+                if loc == king_loc:
+                    raise RuleBroken('King in danger')
+
     except RuleBroken as rb:
         return rb
 

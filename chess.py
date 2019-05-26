@@ -764,8 +764,6 @@ class KingInDanger(RuleBroken):
 
 @rule_validator
 def validate_movement(chess, mv: Movement):
-    # REWRITING validate_movement
-
     # 1. You have to move a piece, but not move air
     # 2. You can't move piece out of board
     # 3. The piece you move must be of your own camp, you can't move your partner's piece
@@ -980,14 +978,12 @@ class PKing(Piece):
         rook_loc = cas.sub_movement.frm
 
         if has_piece(chess, king_loc):
-            print(chess.square_to_piece[king_loc])
             if chess.square_to_piece[king_loc].job != Job.KING:
                 raise RuleBroken('King has moved')
         else:
             raise RuleBroken('King has moved')
 
         if has_piece(chess, rook_loc):
-            print(chess.square_to_piece[rook_loc])
             if chess.square_to_piece[rook_loc].job != Job.CASTLE:
                 raise RuleBroken('Castle has moved')
         else:

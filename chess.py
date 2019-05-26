@@ -789,6 +789,11 @@ def validate_movement(chess, mv: Movement):
     if pi.camp != chess.turn:
         raise RuleBroken('You can\'t move your partner\'s piece')
 
+    # special logic for castling
+    if isinstance(mv, (MLongCastling, MShortCastling)):
+        _, king_pi = chess.find_king(camp=chess.turn)
+        pi = king_pi
+
     pi.validate_movement(chess, mv)
 
     # check King safety
@@ -948,7 +953,7 @@ class PKing(Piece):
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
         if isinstance(mv, (MLongCastling, MShortCastling)):
-            self.validate_castling(chess, mv)
+            return self.validate_castling(chess, mv)
 
         else:
             king_rule_caption = 'King only move straight by one square'
@@ -974,6 +979,20 @@ class PKing(Piece):
         king_loc = cas.frm
         rook_loc = cas.sub_movement.frm
 
+        if has_piece(chess, king_loc):
+            print(chess.square_to_piece[king_loc])
+            if chess.square_to_piece[king_loc].job != Job.KING:
+                raise RuleBroken('King has moved')
+        else:
+            raise RuleBroken('King has moved')
+
+        if has_piece(chess, rook_loc):
+            print(chess.square_to_piece[rook_loc])
+            if chess.square_to_piece[rook_loc].job != Job.CASTLE:
+                raise RuleBroken('Castle has moved')
+        else:
+            raise RuleBroken('Castle has moved')
+
         path = make_path(start=king_loc, end=rook_loc)
 
         # if interfered by other pieces
@@ -992,7 +1011,7 @@ class PKing(Piece):
             if is_under_attack(chess, sq=psq, by_camp=self.camp.another):
                 raise RuleBroken('Castling requires a totally safe path')
 
-        # TODO: check if both rook and king is not moved
+        # TODO: ensure both rook and king is not moved
 
         return RULE_OK
 

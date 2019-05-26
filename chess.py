@@ -1,5 +1,6 @@
 import itertools
 import random
+import re
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
@@ -241,30 +242,75 @@ class PKing(Piece):
         #   movement:
         #     1. king move toward the castle by two square
         #     2. the castle move toward, over, and right beside king
-        frm = chess.piece_to_square.get(self)
-        return self.check_target(chess, frm, self.attack_lst(chess))
 
-        # TODO: CASTLING
+        frm = chess.piece_to_square.get(self)
+        for mv in self.check_target(chess, frm, self.attack_lst(chess)):
+            yield mv
+
+        cas = MLongCastling(camp=self.camp)
+        try:
+            self.validate_castling(chess, cas)
+        except RuleBroken:
+            pass
+        else:
+            yield cas
+
+        cas = MShortCastling(camp=self.camp)
+        try:
+            self.validate_castling(chess, cas)
+        except RuleBroken:
+            pass
+        else:
+            yield cas
 
     @rule_validator
     def is_valid_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
-        king_rule_caption = 'King only move straight by one square'
+        if isinstance(mv, (MLongCastling, MShortCastling)):
+            self.validate_castling(chess, mv)
 
-        try:
-            delta = mv.to - mv.frm
-            passes(start=mv.frm, delta=delta, straight_only=True)
-        except InvalidPath:
-            raise RuleBroken(king_rule_caption)
-
-        if delta.dis >= 2:
-            raise RuleBroken(king_rule_caption)
-
-        if mv.capture:
-            self.assert_valid_capture(chess, mv.capture)
         else:
-            self.assert_valid_move(chess, mv.to)
+            king_rule_caption = 'King only move straight by one square'
 
-        # TODO: check CASTLING
+            try:
+                delta = mv.to - mv.frm
+                passes(start=mv.frm, delta=delta, straight_only=True)
+            except InvalidPath:
+                raise RuleBroken(king_rule_caption)
+
+            if delta.dis >= 2:
+                raise RuleBroken(king_rule_caption)
+
+            if mv.capture:
+                self.assert_valid_capture(chess, mv.capture)
+            else:
+                self.assert_valid_move(chess, mv.to)
+
+        return RULE_OK
+
+    @rule_validator
+    def validate_castling(self, chess, cas: 'Movement'):
+        king_loc = cas.frm
+        rook_loc = cas.sub_movement.frm
+
+        path = passes(start=king_loc, end=rook_loc)
+
+        # if interfered by other pieces
+        try:
+            self.assert_clear_path(chess, path)
+        except RuleBroken:
+            raise RuleBroken('Castling interfered by other pieces')
+
+        # king or rook in currently attacked
+        if any(piece_lst_attacks(chess, sq=king_loc, camp=self.camp.another)) or \
+                any(piece_lst_attacks(chess, sq=rook_loc, camp=self.camp.another)):
+            raise RuleBroken('You cannot do castling when king or rook is attacked')
+
+        # danger in path way
+        for psq in path:
+            if any(piece_lst_attacks(chess, sq=psq, camp=self.camp.another)):
+                raise RuleBroken('Castling requires a totally safe path')
+
+        # TODO: check if both rook and king is not moved
 
         return RULE_OK
 
@@ -628,6 +674,34 @@ class Chess(object):
                 self.piece_to_square.pop(pi)
                 return pi
 
+    def apply(self, mv, into_history=True):
+        if self.square_to_piece.get(mv.frm) is None:
+            raise mv.MovementError('{} is empty so nothing to move'.format(mv.frm.format()))
+
+        if not mv.capture and mv.to and self.square_to_piece.get(mv.to):
+            raise mv.MovementError('{} is occupied by another piece'.format(mv.to.format()))
+
+        if mv.capture and self.square_to_piece.get(mv.capture) is None:
+            raise mv.MovementError('{} is empty so nothing to capture'.format(mv.capture.format()))
+
+        if mv.replace and mv.replace in self.piece_to_square:
+            raise mv.MovementError('the piece to replace is on the board: {}'.format(mv.replace.format()))
+
+        pie = self.remove(square=mv.frm)
+
+        if mv.capture:
+            self.remove(square=mv.capture)
+
+        self.put(square=mv.to or mv.capture, piece=mv.replace or pie)
+
+        if mv.sub_movement:
+            self.apply(mv.sub_movement, into_history=False)
+
+        if into_history:
+            self.history.append(self)
+
+        return self
+
     def format(self):
         """a simple way to visualize"""
 
@@ -700,31 +774,6 @@ class Movement(object):
 
         self.sub_movement = sub_movement
 
-    def apply_to(self, chess):
-        if chess.square_to_piece.get(self.frm) is None:
-            raise self.MovementError('{} is empty so nothing to move'.format(self.frm.format()))
-
-        if not self.capture and self.to and chess.square_to_piece.get(self.to):
-            raise self.MovementError('{} is occupied by another piece'.format(self.to.format()))
-
-        if self.capture and chess.square_to_piece.get(self.capture) is None:
-            raise self.MovementError('{} is empty so nothing to capture'.format(self.capture.format()))
-
-        if self.replace and self.replace in chess.piece_to_square:
-            raise self.MovementError('the piece to replace is on the board: {}'.format(self.replace.format()))
-
-        pie = chess.remove(square=self.frm)
-
-        if self.capture:
-            chess.remove(square=self.capture)
-
-        chess.put(square=self.to or self.capture, piece=self.replace or pie)
-
-        if self.sub_movement:
-            chess = self.sub_movement.apply_to(chess)
-
-        return chess
-
     @property
     def name(self):
         if self.capture:
@@ -759,6 +808,117 @@ class Movement(object):
 
 
 _m = Movement.by_name
+
+
+class MLongCastling(Movement):
+    def __init__(self, camp: Camp):
+        if camp == Camp.A:
+            frm = Square.by_name('e1')
+            to = Square.by_name('c1')
+            rook_frm = Square.by_name('a1')
+            rook_to = Square.by_name('d1')
+
+        elif camp == Camp.B:
+            frm = Square.by_name('e8')
+            to = Square.by_name('c8')
+            rook_frm = Square.by_name('a8')
+            rook_to = Square.by_name('d8')
+
+        else:
+            raise ValueError
+
+        super(MLongCastling, self).__init__(
+            frm=frm,
+            to=to,
+            sub_movement=Movement(
+                frm=rook_frm,
+                to=rook_to
+            )
+        )
+
+    def format(self):
+        return 'O-O-O'
+
+
+class MShortCastling(Movement):
+    def __init__(self, camp: Camp):
+        if camp == Camp.A:
+            frm = Square.by_name('e1')
+            to = Square.by_name('g1')
+            rook_frm = Square.by_name('h1')
+            rook_to = Square.by_name('f1')
+
+        elif camp == Camp.B:
+            frm = Square.by_name('e8')
+            to = Square.by_name('g8')
+            rook_frm = Square.by_name('h8')
+            rook_to = Square.by_name('f8')
+
+        else:
+            raise ValueError
+
+        super(MShortCastling, self).__init__(
+            frm=frm,
+            to=to,
+            sub_movement=Movement(
+                frm=rook_frm,
+                to=rook_to
+            )
+        )
+
+    def format(self):
+        return 'O-O'
+
+
+def guess_movement(command_text, chess):
+    cmd = re.sub(r'\s', '', command_text).lower()
+
+    # remove comments
+    if '#' in cmd:
+        cmd = cmd.split('#')[0]
+
+    if cmd == 'o-o':
+        return MShortCastling(camp=chess.turn)
+
+    elif cmd == 'o-o-o':
+        return MLongCastling(camp=chess.turn)
+
+    rep = None
+    if '=' in cmd:
+        move, rep = cmd.split('=')
+
+        for j in [PKing, PQueen, PPawn, PCastle, PBishop, PKnight]:
+            if rep == j.abbr_char.lower():
+                rep = j.job
+                break
+        else:
+            raise ValueError('={} does not represent any job'.format(rep))
+
+        cmd = move
+
+    segs = re.split(r'[-x*]', cmd)
+
+    # from and to
+    if len(segs) != 2:
+        raise ValueError('Can not understand ' + cmd)
+    frm, to = segs
+    frm = Square.by_name(frm)
+    to = Square.by_name(to)
+
+    # find in all valid movements
+    for _mv in generate_movements(chess, camp=chess.turn):
+        if _mv.frm == frm and _mv.to == to:
+            # if found one, then that's it
+            return _mv
+
+    # if not found, that's an invalid movement
+    # but it's not our job to complain here, it's done in validation procedure
+    if _has_piece(chess, at=to):
+        mv = Movement(frm=frm, capture=to, replace=rep)
+    else:
+        mv = Movement(frm=frm, to=to, replace=rep)
+
+    return mv
 
 
 class Delta(object):
@@ -1015,7 +1175,7 @@ def validate_movement(chess, mv: Movement):
     # check King safety
 
     chess = chess.copy()
-    chess = mv.apply_to(chess)
+    chess = chess.apply(mv)
     king_loc, _ = chess.find_king(camp=chess.turn)
 
     # traverse piece from other camp
@@ -1035,20 +1195,16 @@ class Player(object):
         except EOFError:
             cmd = 'resign'
 
-        return self.parse_command(cmd)
+        return self.parse_command(cmd, chess)
 
     @staticmethod
-    def parse_command(cmd):
-        # comments after "#"
-        if '#' in cmd:
-            cmd = cmd.split('#')[0]
-
+    def parse_command(cmd, chess):
         cmd = cmd.lower().strip()
 
-        if cmd == 'resign':
+        if 'resign' in cmd:
             return ResignRequest()
         else:
-            return _m(cmd)
+            return guess_movement(cmd, chess=chess)
 
     @property
     def camp(self):
@@ -1064,7 +1220,7 @@ class PlayerByManual(Player):
     def __call__(self, chess):
         if self.cur < len(self.movement_lst):
             self.cur += 1
-            return self.parse_command(self.movement_lst[self.cur - 1])
+            return self.parse_command(self.movement_lst[self.cur - 1], chess)
         else:
             return ResignRequest()
 
@@ -1209,7 +1365,7 @@ def play(player_a, player_b):
             else:
                 break
 
-        chess = mv.apply_to(chess)
+        chess = chess.apply(mv)
 
 
 if __name__ == '__main__':

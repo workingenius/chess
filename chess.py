@@ -1,6 +1,7 @@
 import itertools
 import random
 import re
+import time
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
@@ -228,6 +229,7 @@ class Chess(object):
 
         self.turn = None  # who's turn
         self.history = []
+        self.turn_count_without_capture = 0
 
     def copy(self):
         c = self.__class__()
@@ -293,6 +295,11 @@ class Chess(object):
 
         if into_history:
             self.history.append(self)
+
+        if not mv.capture:
+            self.turn_count_without_capture += 1
+        else:
+            self.turn_count_without_capture = 0
 
         return self
 
@@ -1323,15 +1330,20 @@ class ChessResult(object):
         return self.__class__ == other.__class__ and self.winner == other.winner
 
 
-class Stalemate(ChessResult):
+class Draw(ChessResult):
     winner = None
     loser = None
 
     def format(self, camp=None):
-        return 'Draw by stalemate'
+        return 'Draw'
 
     def __str__(self):
         return self.format()
+
+
+class Stalemate(Draw):
+    def format(self, camp=None):
+        return 'Draw by stalemate'
 
 
 class Checkmate(ChessResult):
@@ -1376,7 +1388,7 @@ class Resign(ChessResult):
         return self.format()
 
 
-def play(player_a, player_b):
+def play(player_a, player_b) -> ChessResult:
     chess = Chess.setup()
 
     for player in itertools.cycle([player_a, player_b]):
@@ -1384,6 +1396,10 @@ def play(player_a, player_b):
 
         print()
         print(chess.format())
+
+        # After 50 steps without capture, game draw
+        if chess.turn_count_without_capture >= 50:
+            return Draw()
 
         # When one camp has no valid movement, either checkmate or stalemate happens
         #

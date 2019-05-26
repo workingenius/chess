@@ -1389,6 +1389,27 @@ class Resign(ChessResult):
         return self.format()
 
 
+def check_outcome(chess):
+    # After 50 steps without capture, game draw
+    if chess.turn_count_without_capture >= 50:
+        return Draw()
+
+    # When one camp has no valid movement, either checkmate or stalemate happens
+    #
+    # + if the other camp have no movement to save their king -- checkmate
+    # + if the other camp have no possible movement, and their king is not in danger -- stalemate
+
+    if not list(generate_movements(chess, camp=chess.turn)):
+        # no possible movements anymore
+
+        # check if king is in danger
+        ki_sq, ki_pi = chess.find_king()
+        if is_under_attack(chess, sq=ki_sq, by_camp=chess.turn.another):
+            return Checkmate(chess.turn.another)
+        else:
+            return Stalemate()
+
+
 def play(player_a, player_b) -> ChessResult:
     chess = Chess.setup()
 
@@ -1398,24 +1419,9 @@ def play(player_a, player_b) -> ChessResult:
         print()
         print(chess.format())
 
-        # After 50 steps without capture, game draw
-        if chess.turn_count_without_capture >= 50:
-            return Draw()
-
-        # When one camp has no valid movement, either checkmate or stalemate happens
-        #
-        # + if the other camp have no movement to save their king -- checkmate
-        # + if the other camp have no possible movement, and their king is not in danger -- stalemate
-
-        if not list(generate_movements(chess, camp=chess.turn)):
-            # no possible movements anymore
-
-            # check if king is in danger
-            ki_sq, ki_pi = chess.find_king()
-            if is_under_attack(chess, sq=ki_sq, by_camp=chess.turn.another):
-                return Checkmate(chess.turn.another)
-            else:
-                return Stalemate()
+        ot = check_outcome(chess)
+        if ot:
+            return ot
 
         mv = player(chess)
         if isinstance(mv, ResignRequest):

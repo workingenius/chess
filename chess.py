@@ -1,7 +1,6 @@
 import itertools
 import random
 import re
-import time
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
@@ -376,20 +375,6 @@ class Movement(object):
     def format(self):
         return 'movement {}'.format(self.name)
 
-    @classmethod
-    def by_name(cls, name):
-        """notice: special movements like promotion, En passant, castling cant be created by name"""
-
-        f, t, c = None, None, None
-        if '-' in name:
-            f, t = name.split('-')
-        elif 'x' in name:
-            f, c = name.split('x')
-
-        return cls(frm=Square.by_name(f),
-                   to=Square.by_name(t) if t else None,
-                   capture=Square.by_name(c) if c else None)
-
 
 class MLongCastling(Movement):
     def __init__(self, camp: Camp):
@@ -563,6 +548,7 @@ class Delta(object):
 
     @property
     def is_north_west(self):
+        # noinspection PyChainedComparisons
         return self.x < 0 and self.y > 0
 
     @property
@@ -575,6 +561,7 @@ class Delta(object):
 
     @property
     def is_south_east(self):
+        # noinspection PyChainedComparisons
         return self.x > 0 and self.y < 0
 
     @property
@@ -1038,16 +1025,16 @@ class PPawn(Piece):
         # check charge
         if at.is_starting_line(index=1, camp=self.camp):
             d = Delta.as_camp(forward=2, camp=self.camp)
-            to = at + d
-            if not has_interfering_piece(chess, make_path(at, delta=d)) and not has_piece(chess, at=to):
+            t = at + d
+            if not has_interfering_piece(chess, make_path(at, delta=d)) and not has_piece(chess, at=t):
                 # no need to check for promotion in starting point
-                yield mk_mv(frm=at, to=to)
+                yield mk_mv(frm=at, to=t)
 
         # one step forward
         d = Delta.as_camp(forward=1, camp=self.camp)
-        to = at + d
-        if not has_piece(chess, at=to):
-            for mv in mv_with_promotion(frm=at, to=to):
+        t = at + d
+        if not has_piece(chess, at=t):
+            for mv in mv_with_promotion(frm=at, to=t):
                 yield mv
 
         # capture
@@ -1178,8 +1165,8 @@ class PQueen(Piece):
 
     @within_board
     def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
-        for dir in ALL_DIRECTIONS:
-            for to in move_down_straight(chess, sq, dir):
+        for _dir in ALL_DIRECTIONS:
+            for to in move_down_straight(chess, sq, _dir):
                 yield to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
@@ -1208,8 +1195,8 @@ class PCastle(Piece):
 
     @within_board
     def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
-        for dir in HORIZONTAL_AND_VERTICAL_DIRECTIONS:
-            for to in move_down_straight(chess, sq, dir):
+        for _dir in HORIZONTAL_AND_VERTICAL_DIRECTIONS:
+            for to in move_down_straight(chess, sq, _dir):
                 yield to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
@@ -1246,8 +1233,8 @@ class PBishop(Piece):
 
     @within_board
     def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
-        for dir in DIAGONAL_DIRECTIONS:
-            for to in move_down_straight(chess, sq, dir):
+        for _dir in DIAGONAL_DIRECTIONS:
+            for to in move_down_straight(chess, sq, _dir):
                 yield to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
@@ -1340,6 +1327,7 @@ class RandomPlayer(Player):
 
 class ChessResult(object):
     def __eq__(self, other):
+        # noinspection PyUnresolvedReferences
         return self.__class__ == other.__class__ and self.winner == other.winner
 
 

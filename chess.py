@@ -5,7 +5,7 @@ import time
 from enum import Enum
 from functools import wraps
 from string import ascii_lowercase
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Tuple, Dict, Optional
 
 BOARD_SIZE = 8
 
@@ -138,6 +138,9 @@ class Piece(object):
     def __repr__(self):
         return '{cls}({cm})'.format(cls=self.__class__.__name__, cm=self.camp)
 
+    def __eq__(self, other):
+        return isinstance(other, Piece) and self.camp == other.camp and self.job == other.job
+
     def format(self):
         return str(self)
 
@@ -146,12 +149,12 @@ class Piece(object):
         """if the movement <mv> about the job is valid. If not, tell reason"""
         raise NotImplementedError
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
-        """generate all movements launched by the piece"""
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+        """generate all movements launched by the piece from square <sq>"""
         raise NotImplementedError
 
-    def attack_lst(self, chess) -> Iterator[Square]:
-        """generate all squares it is able to capture in the next movement,
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
+        """generate all squares it is able to capture in the next movement from square <sq>,
         even if there's not a piece or the piece is of same camp"""
         raise NotImplementedError
 
@@ -220,8 +223,7 @@ class Chess(object):
         return c
 
     def __init__(self):
-        self.square_to_piece = {}
-        self.piece_to_square = {}
+        self.square_to_piece: Dict[Square, Optional[Piece]] = {}
 
         for i in range(8):
             for j in range(8):
@@ -234,41 +236,26 @@ class Chess(object):
     def copy(self):
         c = self.__class__()
         c.square_to_piece = dict(self.square_to_piece)
-        c.piece_to_square = dict(self.piece_to_square)
         c.turn = self.turn
         c.history = list(self.history)
         return c
 
     def put(self, piece, square):
-        assert piece not in self.piece_to_square
         self.square_to_piece[square] = piece
-        self.piece_to_square[piece] = square
 
-    def remove(self, piece=None, square=None):
-        if piece is None and square is None:
-            raise ValueError('either piece or square should be given')
+    def remove(self, square, piece=None) -> Optional[Piece]:
+        if not isinstance(square, Square):
+            raise ValueError('invalid square: {}'.format(square))
 
-        if piece is not None and square is not None:
-            if self.piece_to_square.get(piece) != square or \
-                    self.square_to_piece.get(square) != piece:
-                raise ValueError('piece and square maps wrong')
+        if piece is not None:
+            the_pi = self.square_to_piece.get(square)
+            if the_pi != piece:
+                raise ValueError('piece to move is not a {}, but {}'.format(piece, the_pi))
 
-        # remove piece by piece and return square
-        if piece:
-            if piece not in self.piece_to_square:
-                raise ValueError('piece is not on board and cant remove')
-
-            sq = self.piece_to_square.pop(piece)
-            self.square_to_piece[sq] = None
-            return sq
-
-        # remove piece by square and return piece
-        elif square:
-            pi = self.square_to_piece.get(square)
-            if pi:
-                self.square_to_piece[square] = None
-                self.piece_to_square.pop(pi)
-                return pi
+        pi = self.square_to_piece.get(square)
+        if pi:
+            self.square_to_piece[square] = None
+            return pi
 
     def apply(self, mv, into_history=True):
         if self.square_to_piece.get(mv.frm) is None:
@@ -279,9 +266,6 @@ class Chess(object):
 
         if mv.capture and self.square_to_piece.get(mv.capture) is None:
             raise mv.MovementError('{} is empty so nothing to capture'.format(mv.capture.format()))
-
-        if mv.replace and mv.replace in self.piece_to_square:
-            raise mv.MovementError('the piece to replace is on the board: {}'.format(mv.replace.format()))
 
         pie = self.remove(square=mv.frm)
 
@@ -329,13 +313,11 @@ class Chess(object):
 
         return '\n'.join(lines)
 
-    def pieces(self, camp=None):
-        pi_lst = self.piece_to_square.keys()
-
-        if camp:
-            pi_lst = filter(lambda p: p.camp == camp, pi_lst)
-
-        return pi_lst
+    def locations(self, camp=None):
+        if camp is None:
+            return [(sq, pi) for sq, pi in self.square_to_piece.items() if pi]
+        else:
+            return [(sq, pi) for sq, pi in self.square_to_piece.items() if (pi and pi.camp == camp)]
 
     def find_king(self, camp=None) -> Tuple[Square, Piece]:
         """Find out your king"""
@@ -343,14 +325,11 @@ class Chess(object):
         if camp is None:
             camp = self.turn
 
-        def find_out_king():
-            for pi in self.pieces(camp=camp):
-                if pi.job == Job.KING:
-                    return pi
+        for sq, pi in self.square_to_piece.items():
+            if pi and pi.job == Job.KING and pi.camp == camp:
+                return sq, pi
 
-        ki = find_out_king()
-
-        return self.piece_to_square[ki], ki
+        raise ValueError('King not found')
 
 
 class Movement(object):
@@ -733,12 +712,12 @@ def has_interfering_piece(chess, path):
 #         # side 1, validate a movement
 #         pass
 #
-#     def generate_movements(self, chess) -> Iterator['Movement']:
-#         # side 2, generate all movements related to the current piece
+#     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+#         # side 2, generate all movements related to the current piece, the piece is at <sq>
 #         pass
 #
-#     def attack_lst(self, chess) -> Iterator[Square]:
-#         # list all squares it can capture suppose there stand an enemy piece
+#     def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
+#         # list all squares it can capture suppose there stand an enemy piece from square <sq>
 #         pass
 #
 # All rule validators are decorated by "rule_validator", and they should raise RuleBroken exception with reason.
@@ -801,9 +780,8 @@ def validate_movement(chess, mv: Movement) -> None:
 def generate_movements(chess, camp) -> Iterator[Movement]:
     """All possible movements that will not put King in danger"""
 
-    for pi in chess.pieces(camp):
-        pi: Piece = pi
-        for mv in pi.generate_movements(chess):
+    for sq, pi in chess.locations(camp=camp):
+        for mv in pi.generate_movements(chess, sq=sq):
             try:
                 validate_movement(chess, mv)
             except RuleBroken:
@@ -814,8 +792,8 @@ def generate_movements(chess, camp) -> Iterator[Movement]:
 
 def is_under_attack(chess, sq: Square, by_camp=None) -> bool:
     """check if square <sq> is under attack by camp <by_camp>"""
-    for pi in chess.pieces(camp=by_camp):
-        for att_sq in pi.attack_lst(chess):
+    for at_sq, pi in chess.locations(camp=by_camp):
+        for att_sq in pi.attack_lst(chess, sq=at_sq):
             if att_sq == sq:
                 return True
     return False
@@ -900,13 +878,12 @@ class PKing(Piece):
     job = Job.KING
 
     @within_board
-    def attack_lst(self, chess) -> Iterator[Square]:
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
         # squares surrounding it in all eight direction on board
-        sq = chess.piece_to_square.get(self)
         for di in ALL_DIRECTIONS:
             yield sq + di
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
         # regular moves
         #   squares surrounding it in all eight direction on board, able to move there and capture a enemy
         # castling
@@ -919,8 +896,8 @@ class PKing(Piece):
         #     1. king move toward the castle by two square
         #     2. the castle move toward, over, and right beside king
 
-        frm = chess.piece_to_square.get(self)
-        for mv in make_movements_by_target(chess, frm, self.attack_lst(chess), camp=self.camp):
+        frm = sq
+        for mv in make_movements_by_target(chess, frm, self.attack_lst(chess, sq=frm), camp=self.camp):
             yield mv
 
         cas = MLongCastling(camp=self.camp)
@@ -1004,19 +981,19 @@ class PPawn(Piece):
     job = Job.PAWN
 
     @within_board
-    def attack_lst(self, chess) -> Iterator[Square]:
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
         # one square ahead of columns on both side
         # special case: en passant
         #   If a pawn is beside an enemy pawn who has just charged two square,
         #   he can move diagonally as usual and attack back to capture the enemy pawn
 
-        yield chess.piece_to_square[self] + Delta.as_camp(forward=1, leftward=1, camp=self.camp)
-        yield chess.piece_to_square[self] + Delta.as_camp(forward=1, rightward=1, camp=self.camp)
+        yield sq + Delta.as_camp(forward=1, leftward=1, camp=self.camp)
+        yield sq + Delta.as_camp(forward=1, rightward=1, camp=self.camp)
 
         # TODO: en passant
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
-        at = chess.piece_to_square[self]
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+        at = sq
 
         def mv_with_promotion(frm, to=None, capture=None):
             target = to or capture
@@ -1049,7 +1026,7 @@ class PPawn(Piece):
                 yield mv
 
         # capture
-        for cp in self.attack_lst(chess):
+        for cp in self.attack_lst(chess, sq=at):
             if has_enemy(chess, camp=self.camp, at=cp):
                 for mv in mv_with_promotion(frm=at, capture=cp):
                     yield mv
@@ -1111,12 +1088,12 @@ class PKnight(Piece):
     job = Job.KNIGHT
 
     @within_board
-    def attack_lst(self, chess) -> Iterator[Square]:
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
         for d in L_SHAPES:
-            yield chess.piece_to_square[self] + d
+            yield sq + d
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
-        return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
@@ -1135,13 +1112,13 @@ class PQueen(Piece):
     job = Job.QUEEN
 
     @within_board
-    def attack_lst(self, chess) -> Iterator[Square]:
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
         for dir in ALL_DIRECTIONS:
-            for to in move_down_straight(chess, chess.piece_to_square[self], dir):
+            for to in move_down_straight(chess, sq, dir):
                 yield to
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
-        return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
@@ -1165,13 +1142,13 @@ class PCastle(Piece):
     job = Job.CASTLE
 
     @within_board
-    def attack_lst(self, chess) -> Iterator[Square]:
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
         for dir in HORIZONTAL_AND_VERTICAL_DIRECTIONS:
-            for to in move_down_straight(chess, chess.piece_to_square[self], dir):
+            for to in move_down_straight(chess, sq, dir):
                 yield to
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
-        return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
@@ -1203,13 +1180,13 @@ class PBishop(Piece):
     job = Job.BISHOP
 
     @within_board
-    def attack_lst(self, chess) -> Iterator[Square]:
+    def attack_lst(self, chess, sq: Square) -> Iterator[Square]:
         for dir in DIAGONAL_DIRECTIONS:
-            for to in move_down_straight(chess, chess.piece_to_square[self], dir):
+            for to in move_down_straight(chess, sq, dir):
                 yield to
 
-    def generate_movements(self, chess) -> Iterator['Movement']:
-        return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
+    def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:

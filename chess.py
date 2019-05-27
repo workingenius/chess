@@ -127,13 +127,9 @@ class Piece(object):
 
     def __init__(self, camp):
         self.camp = camp
-        self.square = None
 
     def __str__(self):
-        if self.square:
-            return '{} of {} at {}'.format(self.job.value, self.camp.value, self.square)
-        else:
-            return '{} of {}'.format(self.job.value, self.camp.value)
+        return '{} of {}'.format(self.job.value, self.camp.value)
 
     def __repr__(self):
         return '{cls}({cm})'.format(cls=self.__class__.__name__, cm=self.camp)
@@ -338,7 +334,7 @@ class Movement(object):
     class MovementError(Exception):
         pass
 
-    def __init__(self, frm, to=None, capture=None, replace=None, sub_movement: 'Movement' = None):
+    def __init__(self, piece: Piece, frm, to=None, capture=None, replace=None, sub_movement: 'Movement' = None):
         self.frm = frm
 
         if to is None and capture is None:
@@ -353,6 +349,9 @@ class Movement(object):
         self.replace = replace
 
         self.sub_movement = sub_movement
+
+        # the piece that moves
+        self.piece = piece
 
     @property
     def name(self):
@@ -405,9 +404,11 @@ class MLongCastling(Movement):
             raise ValueError
 
         super(MLongCastling, self).__init__(
+            piece=PKing(camp=camp),
             frm=frm,
             to=to,
             sub_movement=Movement(
+                piece=PCastle(camp=camp),
                 frm=rook_frm,
                 to=rook_to
             )
@@ -435,9 +436,11 @@ class MShortCastling(Movement):
             raise ValueError
 
         super(MShortCastling, self).__init__(
+            piece=PKing(camp=camp),
             frm=frm,
             to=to,
             sub_movement=Movement(
+                piece=PCastle(camp=camp),
                 frm=rook_frm,
                 to=rook_to
             )
@@ -490,10 +493,11 @@ def guess_movement(command_text, chess):
 
     # if not found, that's an invalid movement
     # but it's not our job to complain here, it's done in validation procedure
+    pi = chess.square_to_piece.get(frm)
     if has_piece(chess, at=to):
-        mv = Movement(frm=frm, capture=to, replace=rep)
+        mv = Movement(piece=pi, frm=frm, capture=to, replace=rep)
     else:
-        mv = Movement(frm=frm, to=to, replace=rep)
+        mv = Movement(piece=pi, frm=frm, to=to, replace=rep)
 
     return mv
 
@@ -753,6 +757,9 @@ def validate_movement(chess, mv: Movement) -> None:
     if pi is None:
         raise RuleBroken('There is not a piece')
 
+    if pi != mv.piece:
+        raise RuleBroken('Piece on the board differ from given')
+
     if not mv.to.is_on_board():
         raise RuleBroken('You cant move out of board')
 
@@ -836,18 +843,18 @@ def is_clear_path(chess, path: Iterator[Square]) -> None:
         raise RuleBroken('You can not move over other pieces')
 
 
-def move_to_or_capture(chess, frm, to, camp):
+def move_to_or_capture(chess, frm, to, camp, piece):
     if has_enemy(chess, camp=camp, at=to):
-        return Movement(frm=frm, capture=to)
+        return Movement(piece=piece, frm=frm, capture=to)
     elif has_alias(chess, camp=camp, at=to):
         return
     else:
-        return Movement(frm=frm, to=to)
+        return Movement(piece=piece, frm=frm, to=to)
 
 
-def make_movements_by_target(chess, frm, to_lst, camp):
+def make_movements_by_target(chess, frm, to_lst, camp, piece):
     for to in to_lst:
-        mv = move_to_or_capture(chess, frm, to, camp)
+        mv = move_to_or_capture(chess, frm, to, camp, piece)
         if mv:
             yield mv
 
@@ -897,7 +904,7 @@ class PKing(Piece):
         #     2. the castle move toward, over, and right beside king
 
         frm = sq
-        for mv in make_movements_by_target(chess, frm, self.attack_lst(chess, sq=frm), camp=self.camp):
+        for mv in make_movements_by_target(chess, frm, self.attack_lst(chess, sq=frm), camp=self.camp, piece=self):
             yield mv
 
         cas = MLongCastling(camp=self.camp)
@@ -995,6 +1002,9 @@ class PPawn(Piece):
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
         at = sq
 
+        def mk_mv(frm, to=None, capture=None, replace=None):
+            return Movement(piece=self, frm=frm, to=to, capture=capture, replace=replace)
+
         def mv_with_promotion(frm, to=None, capture=None):
             target = to or capture
 
@@ -1005,10 +1015,10 @@ class PPawn(Piece):
                     cons_piece(self.camp, Job.BISHOP),
                     cons_piece(self.camp, Job.CASTLE),
                 ]:
-                    yield Movement(frm=frm, to=to, capture=capture, replace=prom)
+                    yield mk_mv(frm=frm, to=to, capture=capture, replace=prom)
 
             else:
-                yield Movement(frm=frm, to=to, capture=capture)
+                yield mk_mv(frm=frm, to=to, capture=capture)
 
         # check charge
         if at.is_starting_line(index=1, camp=self.camp):
@@ -1016,7 +1026,7 @@ class PPawn(Piece):
             to = at + d
             if not has_interfering_piece(chess, make_path(at, delta=d)) and not has_piece(chess, at=to):
                 # no need to check for promotion in starting point
-                yield Movement(frm=at, to=to)
+                yield mk_mv(frm=at, to=to)
 
         # one step forward
         d = Delta.as_camp(forward=1, camp=self.camp)
@@ -1093,7 +1103,7 @@ class PKnight(Piece):
             yield sq + d
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
-        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp, piece=self)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
@@ -1118,7 +1128,7 @@ class PQueen(Piece):
                 yield to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
-        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp, piece=self)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
@@ -1148,7 +1158,7 @@ class PCastle(Piece):
                 yield to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
-        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp, piece=self)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
@@ -1186,7 +1196,7 @@ class PBishop(Piece):
                 yield to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
-        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp)
+        return make_movements_by_target(chess, sq, self.attack_lst(chess, sq=sq), camp=self.camp, piece=self)
 
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:

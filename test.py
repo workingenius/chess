@@ -1,5 +1,6 @@
 import unittest
-from chess import play, PlayerByManual, Checkmate, Camp, Chess, Job, Square, Movement, validate_movement, RuleBroken
+from chess import play, PlayerByManual, Checkmate, Camp, Chess, Job, Square, Movement, validate_movement, RuleBroken, \
+    PCastle
 
 
 class Test(unittest.TestCase):
@@ -27,7 +28,7 @@ class Test(unittest.TestCase):
             [Camp.B, Job.KING, Square.by_name('h7')],
         ])
         chess.turn = Camp.A
-        mv = Movement(frm=Square.by_name('a1'), to=Square.by_name('a0'))
+        mv = Movement(piece=PCastle(camp=Camp.A), frm=Square.by_name('a1'), to=Square.by_name('a0'))
 
         with self.assertRaises(RuleBroken):
             validate_movement(chess, mv)

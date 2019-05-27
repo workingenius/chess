@@ -274,7 +274,7 @@ class Chess(object):
             self.apply(mv.sub_movement, into_history=False)
 
         if into_history:
-            self.history.append(self)
+            self.history.append(mv)
 
         if not mv.capture:
             self.turn_count_without_capture += 1
@@ -980,7 +980,12 @@ class PKing(Piece):
             if is_under_attack(chess, sq=psq, by_camp=self.camp.another):
                 raise RuleBroken('Castling requires a totally safe path')
 
-        # TODO: ensure both rook and king is not moved
+        # check if rook has moved
+        for his_mv in chess.history:
+            if his_mv.frm == king_loc:
+                raise RuleBroken('King has moved')
+            elif his_mv.frm == rook_loc:
+                raise RuleBroken('Castle has moved')
 
 
 class PPawn(Piece):

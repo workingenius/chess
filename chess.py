@@ -327,6 +327,11 @@ class Chess(object):
 
         raise ValueError('King not found')
 
+    @property
+    def last_movement(self):
+        if self.history:
+            return self.history[-1]
+
 
 class Movement(object):
     """movement that don't take chess rule into account"""
@@ -608,6 +613,9 @@ class Delta(object):
     @property
     def dis(self) -> int:
         return max(abs(self.x), abs(self.y))
+
+    def __add__(self, other):
+        return self.__class__(x=self.x + other.x, y=self.y + other.y)
 
     def __mul__(self, other):
         return self.__class__(x=self.x * other, y=self.y * other)
@@ -1002,7 +1010,9 @@ class PPawn(Piece):
         yield sq + Delta.as_camp(forward=1, leftward=1, camp=self.camp)
         yield sq + Delta.as_camp(forward=1, rightward=1, camp=self.camp)
 
-        # TODO: en passant
+        lmv = chess.last_movement
+        if self.is_right_time_for_en_passant(at=sq, last_mv=lmv):
+            yield lmv.to
 
     def generate_movements(self, chess, sq: Square) -> Iterator['Movement']:
         at = sq
@@ -1046,6 +1056,14 @@ class PPawn(Piece):
                 for mv in mv_with_promotion(frm=at, capture=cp):
                     yield mv
 
+        lmv = chess.last_movement
+        if self.is_right_time_for_en_passant(at=sq, last_mv=lmv):
+            yield Movement(piece=self, frm=at,
+                           # capture the pawn by side
+                           capture=lmv.to,
+                           # while go to his back
+                           to=lmv.to + Delta.as_camp(forward=1, camp=self.camp))
+
     @rule_validator
     def validate_movement(self, chess, mv: 'Movement') -> None:
 
@@ -1087,15 +1105,47 @@ class PPawn(Piece):
             # is attacking
             pawn_cap_rule_caption = 'A pawn can only attack enemy in diagonal direction by one square'
 
-            if mv.capture is None:
-                raise RuleBroken(pawn_cap_rule_caption)
-
             if delta.dis != 1:
                 raise RuleBroken(pawn_cap_rule_caption)
 
-            is_valid_capture(chess, capture=mv.capture, camp=self.camp)
+            if mv.capture is None:
+                raise RuleBroken(pawn_cap_rule_caption)
 
-            # TODO: check en passant
+            en_passant = False
+
+            lmv = chess.last_movement
+            if self.is_right_time_for_en_passant(at=mv.frm, last_mv=lmv):
+                if lmv.to + Delta.as_camp(forward=1, camp=self.camp) == mv.to:
+                    en_passant = True
+
+            if not en_passant:
+                is_valid_capture(chess, capture=mv.capture, camp=self.camp)
+
+    def is_right_time_for_en_passant(self, at: Square, last_mv: Optional[Movement]):
+        # Only possible when an enemy pawn just charged, and I'm standing right by its side in the same rank
+
+        # only happen at the forth rank from ending line
+        if not at.is_ending_line(camp=self.camp, index=3):
+            return False
+
+        # must have last movement
+        if last_mv is None:
+            return False
+
+        # last move must be a pawn
+        if last_mv.piece.job != Job.PAWN:
+            return False
+
+        # it should be a charge
+        if (last_mv.to - last_mv.frm).dis != 2:
+            return False
+
+        # right by my side
+        o = last_mv.to - at
+        if o.dis != 1 or not o.is_horizontal:
+            return False
+
+        return True
 
 
 class PKnight(Piece):

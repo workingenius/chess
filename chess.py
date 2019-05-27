@@ -13,7 +13,7 @@ BOARD_SIZE = 8
 def rule_validator(func):
     """Tag a function as a rule validator,
 
-    which should return RuleOk object if rule is ok, and raise RuleBroken if it does not
+    which should raise RuleBroken if it does not
     """
     return func
 
@@ -142,7 +142,7 @@ class Piece(object):
         return str(self)
 
     @rule_validator
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    def validate_movement(self, chess, mv: 'Movement') -> None:
         """if the movement <mv> about the job is valid. If not, tell reason"""
         raise NotImplementedError
 
@@ -729,7 +729,7 @@ def has_interfering_piece(chess, path):
 # methods related to rule:
 #
 #     @rule_validator
-#     def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+#     def validate_movement(self, chess, mv: 'Movement') -> None:
 #         # side 1, validate a movement
 #         pass
 #
@@ -744,21 +744,7 @@ def has_interfering_piece(chess, path):
 # All rule validators are decorated by "rule_validator", and they should raise RuleBroken exception with reason.
 
 
-class RuleStatus(object):
-    pass
-
-
-class RuleOK(RuleStatus):
-    ok = True
-
-    def __bool__(self):
-        return True
-
-
-RULE_OK = RuleOK()
-
-
-class RuleBroken(RuleStatus, Exception):
+class RuleBroken(Exception):
     ok = False
 
     def __bool__(self):
@@ -770,7 +756,7 @@ class KingInDanger(RuleBroken):
 
 
 @rule_validator
-def validate_movement(chess, mv: Movement):
+def validate_movement(chess, mv: Movement) -> None:
     # 1. You have to move a piece, but not move air
     # 2. You can't move piece out of board
     # 3. The piece you move must be of your own camp, you can't move your partner's piece
@@ -811,8 +797,6 @@ def validate_movement(chess, mv: Movement):
     if is_under_attack(chess, sq=king_loc, by_camp=chess.turn.another):
         raise KingInDanger('King in danger')
 
-    return RULE_OK
-
 
 def generate_movements(chess, camp) -> Iterator[Movement]:
     """All possible movements that will not put King in danger"""
@@ -850,7 +834,7 @@ def has_piece(chess, at: Square):
 
 
 @rule_validator
-def is_valid_capture(chess, capture, camp):
+def is_valid_capture(chess, capture, camp) -> None:
     ca = chess.square_to_piece.get(capture)
 
     if ca is None:
@@ -863,13 +847,13 @@ def is_valid_capture(chess, capture, camp):
 
 
 @rule_validator
-def is_valid_move_to(chess, move: Square):
+def is_valid_move_to(chess, move: Square) -> None:
     if has_piece(chess, at=move):
         raise RuleBroken('You can not move to a square with piece')
 
 
 @rule_validator
-def is_clear_path(chess, path: Iterator[Square]):
+def is_clear_path(chess, path: Iterator[Square]) -> None:
     if has_interfering_piece(chess, path):
         raise RuleBroken('You can not move over other pieces')
 
@@ -956,9 +940,9 @@ class PKing(Piece):
             yield cas
 
     @rule_validator
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    def validate_movement(self, chess, mv: 'Movement') -> None:
         if isinstance(mv, (MLongCastling, MShortCastling)):
-            return self.validate_castling(chess, mv)
+            self.validate_castling(chess, mv)
 
         else:
             king_rule_caption = 'King only move straight by one square'
@@ -977,10 +961,8 @@ class PKing(Piece):
             else:
                 is_valid_move_to(chess, mv.to)
 
-        return RULE_OK
-
     @rule_validator
-    def validate_castling(self, chess, cas: 'Movement'):
+    def validate_castling(self, chess, cas: 'Movement') -> None:
         king_loc = cas.frm
         rook_loc = cas.sub_movement.frm
 
@@ -1015,8 +997,6 @@ class PKing(Piece):
                 raise RuleBroken('Castling requires a totally safe path')
 
         # TODO: ensure both rook and king is not moved
-
-        return RULE_OK
 
 
 class PPawn(Piece):
@@ -1075,7 +1055,7 @@ class PPawn(Piece):
                     yield mv
 
     @rule_validator
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    def validate_movement(self, chess, mv: 'Movement') -> None:
 
         # check promotion
         if mv.replace:
@@ -1125,8 +1105,6 @@ class PPawn(Piece):
 
             # TODO: check en passant
 
-        return RULE_OK
-
 
 class PKnight(Piece):
     abbr_char = 'N'
@@ -1141,7 +1119,7 @@ class PKnight(Piece):
         return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
 
     @rule_validator
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    def validate_movement(self, chess, mv: 'Movement') -> None:
         delta = mv.to - mv.frm
         if not delta.is_l_shape:
             raise RuleBroken('Knight can only move in l shape')
@@ -1150,8 +1128,6 @@ class PKnight(Piece):
             is_valid_capture(chess, mv.capture, camp=self.camp)
         else:
             is_valid_move_to(chess, mv.to)
-
-        return RULE_OK
 
 
 class PQueen(Piece):
@@ -1168,7 +1144,7 @@ class PQueen(Piece):
         return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
 
     @rule_validator
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    def validate_movement(self, chess, mv: 'Movement') -> None:
         # valid direction
         try:
             pss = make_path(start=mv.frm, end=mv.to, straight_only=True)
@@ -1182,8 +1158,6 @@ class PQueen(Piece):
             is_valid_capture(chess, mv.capture, camp=self.camp)
         else:
             is_valid_move_to(chess, mv.to)
-
-        return RULE_OK
 
 
 class PCastle(Piece):
@@ -1200,7 +1174,7 @@ class PCastle(Piece):
         return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
 
     @rule_validator
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    def validate_movement(self, chess, mv: 'Movement') -> None:
         castle_rule_caption = 'Castle can only move in vertical or horizontal lines'
 
         # valid direction
@@ -1223,8 +1197,6 @@ class PCastle(Piece):
         else:
             is_valid_move_to(chess, mv.to)
 
-        return RULE_OK
-
 
 class PBishop(Piece):
     abbr_char = 'B'
@@ -1239,7 +1211,8 @@ class PBishop(Piece):
     def generate_movements(self, chess) -> Iterator['Movement']:
         return make_movements_by_target(chess, chess.piece_to_square[self], self.attack_lst(chess), camp=self.camp)
 
-    def validate_movement(self, chess, mv: 'Movement') -> 'RuleStatus':
+    @rule_validator
+    def validate_movement(self, chess, mv: 'Movement') -> None:
         castle_rule_caption = 'Bishop can only move in diagonal lines'
 
         # valid direction
@@ -1261,8 +1234,6 @@ class PBishop(Piece):
             is_valid_capture(chess, mv.capture, camp=self.camp)
         else:
             is_valid_move_to(chess, mv.to)
-
-        return RULE_OK
 
 
 # Implement Players

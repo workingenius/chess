@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+
+package chessmsg;
+
+
+enum Camp {
+    A = 0; // White
+    B = 1; // Black
+}
+
+/*
+    Piece and square are represented by int32.
+    It requires stable square table and piece table.
+*/
+
+message ChessSituation {
+    repeated SPC spc = 1;
+    repeated Movement history = 2;
+}
+
+// "Square & Piece & Camp"
+message SPC {
+    int32 square = 1;
+    int32 piece = 2;
+    Camp camp = 3;
+}
+
+message Movement {
+    int32 frm = 1;
+    int32 to = 2;
+    int32 capture = 3;
+    int32 replace = 4; // Piece
+    Movement sub = 5;
+}
+
+message Outcome {
+    enum Status {
+        CHECKMATE = 0;
+        STALEMATE = 1;
+        DRAW = 2;
+        RESIGN = 3;
+    }
+
+    Status status = 1;
+    Camp winner = 2;
+}
+
+/*
+    Subscribe and Notification
+*/
+
+message SubscribeRequest {
+    string chess_id = 1;
+}
+
+message Notification {
+    string chess_id = 1;
+    oneof event {
+        ChessSituation situation = 2;
+        Movement movement = 3;
+        Outcome outcome = 4;
+    }
+}
+
+/*
+    Make moves
+*/
+
+message Action {
+    string chess_id = 1;
+    Movement movement = 2;
+    string special = 3;
+}
+
+message ActionStatus {
+    string chess_id = 1;
+    bool ok = 2;
+    string caption = 3;
+}
+
+/*
+    New game and attending game
+*/
+
+message GameRequest {}
+
+message GameResponse {
+    string chess_id = 1;
+}
+
+service ChessService {
+    rpc subscribe (SubscribeRequest) returns (stream Notification);
+    rpc make_move (Action) returns (ActionStatus);
+    rpc attend_game (GameRequest) returns (GameResponse);
+}

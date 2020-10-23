@@ -15,8 +15,9 @@ enum Camp {
 */
 
 message ChessSituation {
-    repeated SPC spc = 1;
-    repeated Movement history = 2;
+    Camp turn = 1;
+    repeated SPC spc = 2;
+    repeated Movement history = 3;
 }
 
 // "Square & Piece & Camp"
@@ -27,11 +28,12 @@ message SPC {
 }
 
 message Movement {
-    int32 frm = 1;
-    int32 to = 2;
-    int32 capture = 3;
-    int32 replace = 4; // Piece
-    Movement sub = 5;
+    int32 piece = 1;
+    int32 frm = 2;
+    int32 to = 3;
+    int32 capture = 4;
+    int32 replace = 5; // Piece
+    Movement sub = 6;
 }
 
 message Outcome {
@@ -51,16 +53,18 @@ message Outcome {
 */
 
 message SubscribeRequest {
-    string chess_id = 1;
+    string game_id = 1;
+    string client_id = 2;
 }
 
 message Notification {
-    string chess_id = 1;
+    string game_id = 1;
     oneof event {
         ChessSituation situation = 2;
         Movement movement = 3;
         Outcome outcome = 4;
     }
+    Camp turn_to = 5;
 }
 
 /*
@@ -68,13 +72,13 @@ message Notification {
 */
 
 message Action {
-    string chess_id = 1;
+    string game_id = 1;
     Movement movement = 2;
     string special = 3;
 }
 
 message ActionStatus {
-    string chess_id = 1;
+    string game_id = 1;
     bool ok = 2;
     string caption = 3;
 }
@@ -83,13 +87,15 @@ message ActionStatus {
     New game and attending game
 */
 
-message GameRequest {}
-
-message GameResponse {
-    string chess_id = 1;
+message GameRequest {
+    string client_id = 1;
 }
 
-service ChessService {
+message GameResponse {
+    string game_id = 1;
+}
+
+service Chess {
     rpc subscribe (SubscribeRequest) returns (stream Notification);
     rpc make_move (Action) returns (ActionStatus);
     rpc attend_game (GameRequest) returns (GameResponse);
